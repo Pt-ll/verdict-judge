@@ -5,5 +5,5 @@
   "type": "interactive",
   "limits": { "timeMs": 2000, "memoryMb": 256, "stackMb": 256, "outputKb": 4096 },
   "comparator": { "mode": "interactive", "interactor": "extra/interactor.cpp" },
-  "tests": [{ "id": "1", "input": "data/1.in", "answer": "data/1.out", "points": 100 }]
+  "tests": [{ "id": "1", "input": "1.in", "answer": "1.out", "points": 100 }]
 }

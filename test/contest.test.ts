@@ -5,10 +5,15 @@ import { afterAll, describe, expect, it } from 'vitest';
 import {
   CONTEST_FILE,
   VERDICT_DIR,
+  addProblemToContest,
   findContestRoot,
+  legacyContestPath,
+  listContests,
   loadContest,
   contestPath,
+  removeProblemFromContest,
   saveContest,
+  submissionsPath,
 } from '../src/core/contest/contest';
 
 const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verdict-contest-'));
@@ -147,7 +152,8 @@ describe('saveContest', () => {
 
     await saveContest(pkg);
 
-    const text = fs.readFileSync(contestPath(root), 'utf8');
+    // 单场比赛的旧布局：saveContest 写回它原来那个文件，不会另起一个。
+    const text = fs.readFileSync(legacyContestPath(root), 'utf8');
     expect(text.endsWith('\n')).toBe(true);
     expect(text.includes('\r')).toBe(false);
 
@@ -225,13 +231,127 @@ describe('players/ 自动识别选手', () => {
     const pkg = await loadContest(root);
     await saveContest(pkg);
 
-    const written = JSON.parse(fs.readFileSync(contestPath(root), 'utf8')) as {
+    const written = JSON.parse(fs.readFileSync(legacyContestPath(root), 'utf8')) as {
       contestants: unknown[];
     };
     expect(written.contestants).toEqual([]);
 
     const again = await loadContest(root);
     expect(again.contest.contestants.map((item) => item.id)).toEqual(['carol']);
+  });
+});
+
+describe('一个工作区里放多场比赛', () => {
+  /** 两场比赛 + 一个共用题目库：题目 B 两场都考，这是「题目可以重叠」的现场。 */
+  function twoContests(): string {
+    return makeWorkspace({
+      [path.join(VERDICT_DIR, 'contests', 'spring.json')]: contestJson({
+        id: 'spring',
+        title: '春季赛',
+        problems: ['A', 'B'],
+      }),
+      [path.join(VERDICT_DIR, 'contests', 'autumn.json')]: contestJson({
+        id: 'autumn',
+        title: '秋季赛',
+        problems: ['B'],
+      }),
+      [path.join(VERDICT_DIR, 'problems', 'A', 'problem.json')]: JSON.stringify({ id: 'A' }),
+      [path.join(VERDICT_DIR, 'problems', 'B', 'problem.json')]: JSON.stringify({ id: 'B' }),
+      // 旧布局的单场比赛也一起放在这儿：两种布局必须共存。
+      [path.join(VERDICT_DIR, CONTEST_FILE)]: contestJson({ id: 'legacy', title: '老比赛', problems: [] }),
+    });
+  }
+
+  it('列出全部比赛，新旧布局都在', async () => {
+    const root = twoContests();
+
+    const refs = await listContests(root);
+
+    expect(refs.map((item) => item.id)).toEqual(['autumn', 'legacy', 'spring']);
+    expect(refs.find((item) => item.id === 'legacy')?.legacy).toBe(true);
+    expect(refs.find((item) => item.id === 'spring')?.legacy).toBe(false);
+  });
+
+  it('按 id 读某一场，题目重叠互不影响，记录文件也各归各的', async () => {
+    const root = twoContests();
+
+    const spring = await loadContest(root, 'spring');
+    const autumn = await loadContest(root, 'autumn');
+
+    expect(spring.contest.title).toBe('春季赛');
+    expect(spring.contest.problems.map((item) => item.id)).toEqual(['A', 'B']);
+    expect(autumn.contest.problems.map((item) => item.id)).toEqual(['B']);
+    // 同一个题目包目录被两场比赛共用，这正是 0.1.3 要的「题目可以重叠」。
+    expect(spring.problemDirs.get('B')).toBe(autumn.problemDirs.get('B'));
+    expect(spring.file).toBe(contestPath(root, 'spring'));
+    expect(spring.submissionsFile).toBe(submissionsPath(root, 'spring'));
+    expect(autumn.submissionsFile).not.toBe(spring.submissionsFile);
+  });
+
+  it('不传 id 时给出排在最前面的那一场，而不是报错', async () => {
+    const root = twoContests();
+
+    const pkg = await loadContest(root);
+
+    expect(pkg.contest.id).toBe('autumn');
+  });
+
+  it('文件里的 id 与文件名不一致时当场纠正', async () => {
+    const root = makeWorkspace({
+      [path.join(VERDICT_DIR, 'contests', 'spring.json')]: contestJson({ id: 'summer' }),
+    });
+
+    const message = await loadContest(root, 'spring').then(
+      () => '',
+      (err: unknown) => (err instanceof Error ? err.message : String(err)),
+    );
+
+    expect(message).toContain('两边要一致');
+  });
+
+  it('两场比赛重名时明说改哪一个', async () => {
+    const root = makeWorkspace({
+      [path.join(VERDICT_DIR, 'contests', 'spring.json')]: contestJson({ id: 'spring' }),
+      [path.join(VERDICT_DIR, CONTEST_FILE)]: contestJson({ id: 'spring' }),
+    });
+
+    await expect(listContests(root)).rejects.toThrow(/两场比赛都叫 "spring"/);
+  });
+
+  it('加题、摘题都只动这一场的题目列表', () => {
+    const contest = {
+      id: 'c',
+      title: 'c',
+      maxRejudge: 0,
+      problems: [],
+      contestants: [],
+    };
+    const problem = {
+      id: 'A',
+      name: 'A',
+      type: 'traditional' as const,
+      limits: { timeMs: 1, memoryMb: 1, stackMb: 1, outputKb: 1 },
+      comparator: { mode: 'default' as const },
+      subtasks: [],
+      tests: [],
+    };
+
+    const added = addProblemToContest(contest, problem);
+    expect(added.problems.map((item) => item.id)).toEqual(['A']);
+    // 加两次不会变成两道题。
+    expect(addProblemToContest(added, problem).problems).toHaveLength(1);
+    expect(removeProblemFromContest(added, 'A').problems).toEqual([]);
+    // 原对象不被改动（纯函数，面板与命令共用）。
+    expect(contest.problems).toEqual([]);
+  });
+
+  it('多场比赛：contests/ 下有目录就算工作区根，用不着 contest.json', async () => {
+    const root = makeWorkspace({
+      [path.join(VERDICT_DIR, 'contests', 'spring.json')]: contestJson({ id: 'spring' }),
+      'players/alice/A.cpp': 'int main() {}',
+    });
+
+    expect(await findContestRoot(path.join(root, 'players'), root)).toBe(path.resolve(root));
   });
 });
 

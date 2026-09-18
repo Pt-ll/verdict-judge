@@ -39,9 +39,13 @@ export const VIEW_ID = 'verdict.controlPanel';
 /** 面板上允许触发的命令。写死清单，免得面板里出现什么就能执行什么。 */
 const ALLOWED_COMMANDS = new Set([
   'verdict.newContest',
+  'verdict.switchContest',
   'verdict.newProblem',
   'verdict.importProblem',
   'verdict.exportProblem',
+  'verdict.deleteProblem',
+  'verdict.addProblemToContest',
+  'verdict.removeProblemFromContest',
   'verdict.judgeAll',
   'verdict.showStandings',
   'verdict.exportHtml',
@@ -134,7 +138,11 @@ export class VerdictControlPanel implements vscode.WebviewViewProvider, vscode.D
       // 强制重读比赛：contest.json、submissions.json 都可能在编辑器外面被改。
       await this.deps.contest.load(true);
       state = await collectPanelState(
-        { caseDocs: this.deps.caseDocs, standings: () => this.standingsState() },
+        {
+          caseDocs: this.deps.caseDocs,
+          standings: () => this.standingsState(),
+          activeContestId: () => this.deps.contest.activeId(),
+        },
         this.selectedProblemId,
         { busy: this.busy, notice: this.notice },
       );
@@ -247,6 +255,9 @@ export class VerdictControlPanel implements vscode.WebviewViewProvider, vscode.D
           this.selectedProblemId = asString(message.problemId);
           await this.recompute();
           return;
+        case 'selectContest':
+          await this.selectContest(asString(message.contestId));
+          return;
         case 'judge':
           await this.judge(null);
           return;
@@ -311,7 +322,7 @@ export class VerdictControlPanel implements vscode.WebviewViewProvider, vscode.D
           await this.rejudge(asString(message.contestant), asString(message.problem));
           return;
         case 'command':
-          await this.runCommand(asString(message.command));
+          await this.runCommand(asString(message.command), message.arg);
           return;
         default:
           return;
@@ -447,27 +458,32 @@ export class VerdictControlPanel implements vscode.WebviewViewProvider, vscode.D
     }
     const relative = kind === 'answer' ? test.answer : test.input;
     await vscode.window.showTextDocument(
-      vscode.Uri.file(path.join(selected.rootDir, relative)),
+      vscode.Uri.file(path.join(selected.dataDir, relative)),
       { preview: false },
     );
   }
 
   private async openDataDir(): Promise<void> {
-    const root = this.requireRoot();
-    await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(path.join(root, 'data')));
+    // 数据可能在总库里，也可能还在题目包自己的 data/ 里——面板上显示哪个就打开哪个。
+    const selected = this.lastState?.selected ?? null;
+    if (selected === null) {
+      throw new Error('先在「题目」里选一道题。');
+    }
+    await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(selected.dataDir));
   }
 
-  /** 比赛配置读不出来时，给用户一条直达 contest.json 的路。 */
+  /** 比赛配置读不出来时，给用户一条直达那个 json 的路（多场比赛时打开的是当前这一场）。 */
   private async openContestJson(): Promise<void> {
-    const root = workspaceRoot();
-    if (root === undefined) {
+    const file =
+      this.deps.contest.contestFile() ??
+      (workspaceRoot() === undefined
+        ? null
+        : path.join(workspaceRoot() ?? '', VERDICT_DIR, CONTEST_FILE));
+    if (file === null) {
       this.notify('warn', '这个窗口没有打开文件夹。');
       return;
     }
-    await vscode.window.showTextDocument(
-      vscode.Uri.file(path.join(root, VERDICT_DIR, CONTEST_FILE)),
-      { preview: false },
-    );
+    await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: false });
   }
 
   private async openProblemJson(): Promise<void> {
@@ -670,11 +686,22 @@ export class VerdictControlPanel implements vscode.WebviewViewProvider, vscode.D
     }
   }
 
-  private async runCommand(command: string): Promise<void> {
+  /** 面板上点按钮走的就是这条：命令白名单 + 可选的一个参数（例如题目 id）。 */
+  private async runCommand(command: string, arg?: unknown): Promise<void> {
     if (!ALLOWED_COMMANDS.has(command)) {
       throw new Error(`面板不允许执行命令 ${command}`);
     }
-    await vscode.commands.executeCommand(command);
+    await vscode.commands.executeCommand(command, arg);
+    await this.recompute();
+  }
+
+  /** 切到另一场比赛：会话记住它，随后面板里的题目、榜单都换成那一场的。 */
+  private async selectContest(contestId: string): Promise<void> {
+    if (contestId.length === 0) {
+      return;
+    }
+    this.selectedProblemId = null;
+    await this.deps.contest.setActive(contestId);
     await this.recompute();
   }
 
@@ -726,7 +753,9 @@ function needsFile(config: ComparatorConfig): boolean {
 
 function watchJsonFiles(onChange: () => void): vscode.Disposable {
   const watcher = vscode.workspace.createFileSystemWatcher(
-    '**/{problem.json,contest.json,submissions.json}',
+    // 题目包、旧版单场比赛的 contest.json / submissions.json，
+    // 以及多场比赛的 contests/*.json 与 submissions/*.json 都要盯着。
+    '**/{problem.json,contest.json,submissions.json,contests/*.json,submissions/*.json}',
   );
   return vscode.Disposable.from(
     watcher,

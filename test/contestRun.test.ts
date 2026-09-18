@@ -204,12 +204,14 @@ describe('提交记录的保存与读取', () => {
   });
 
   it('文件不存在时返回空数组；被改坏时报错而不是猜', async () => {
-    expect(await loadSubmissions(path.join(workDir, 'nope'))).toEqual([]);
+    expect(await loadSubmissions(path.join(workDir, 'nope.json'))).toEqual([]);
 
     const verdictDir = path.join(workDir, 'broken');
     fs.mkdirSync(verdictDir, { recursive: true });
-    fs.writeFileSync(path.join(verdictDir, 'submissions.json'), '{"submissions": "oops"}');
-    await expect(loadSubmissions(verdictDir)).rejects.toThrow(/submissions 必须是数组/);
+    const broken = path.join(verdictDir, 'submissions.json');
+    fs.writeFileSync(broken, '{"submissions": "oops"}');
+    // loadSubmissions 收的是文件路径：每场比赛一份记录，文件在哪由 ContestPackage 说了算。
+    await expect(loadSubmissions(broken)).rejects.toThrow(/submissions 必须是数组/);
   });
 
   it('合并时按「选手 × 题目」替换，不会越跑越多', () => {

@@ -168,6 +168,9 @@ function sampleState(): PanelState {
         { id: 'bob', name: 'Bob', auto: true },
       ],
       problemIds: ['A'],
+      all: [{ id: 'demo', title: '演示赛', legacy: true, active: true }],
+      problemsDir: '/w/.verdict/problems',
+      dataDir: '/w/.verdict/data',
       error: null,
     },
     problems: [
@@ -176,6 +179,8 @@ function sampleState(): PanelState {
         name: 'A. 求和',
         type: 'traditional',
         rootDir: '/w/.verdict/problems/A',
+        dataDir: '/w/.verdict/data/A',
+        inContest: true,
         testCount: 2,
         maxScore: 100,
         subtaskCount: 1,
@@ -187,6 +192,7 @@ function sampleState(): PanelState {
       name: 'A. 求和',
       type: 'traditional',
       rootDir: '/w/.verdict/problems/A',
+      dataDir: '/w/.verdict/data/A',
       limits: { timeMs: 1000, memoryMb: 256, stackMb: 256, outputKb: 4096 },
       comparator: { mode: 'default' },
       subtasks: [

@@ -56,8 +56,10 @@ Windows runner 上一次成功的 MSVC 编译加链接就能吃掉 5s 以上（2
 - `test/integration/index.js`：断言命令注册、六种判定（AC/WA/TLE/RE/OLE/CE）与编译失败诊断。
 - `testdata/`（集成测试的工作区）：
   - `itest/`：走 M1 约定式查找的样例程序（AC/WA/TLE/RE/OLE/CE + diff 行号）。
-  - `.verdict/`：一场完整的比赛（`contest.json` + `problems/A`、`problems/B`），
+  - `.verdict/`：一场完整的比赛（`contests/demo.json` + `problems/A`、`problems/B`、`problems/C`），
     验收 Testing 面板、子任务计分，以及 M3 的榜单 / 重测上限 / 导出 HTML。
+    测试数据按 0.1.3 的总库布局放在 `.verdict/data/<题目 id>/`，题目里写 `"input": "1.in"`；
+    0.1.2 的旧布局（`contest.json` + 包内 `data/` + `"data/1.in"`）由单测覆盖，样例不必两套都留。
   - `players/`：选手源码。alice 全对；bob 的 A 题故意在 int 溢出上出错，拿 30/100，
     这样「部分分」这条路每次 CI 都会被真的走到。
   - `.vscode/settings.json`：时限 1000ms、内存 256MB、输出 64KB。
@@ -75,7 +77,8 @@ Windows runner 上一次成功的 MSVC 编译加链接就能吃掉 5s 以上（2
 - M2 题目包 + 测试点 + 子任务 + Testing/diff ✅（三平台 CI 全绿）
 - M3 比赛 + 选手 + 重测 + 榜单 + HTML ✅（三平台 CI 全绿）
 - M4 交互题 + testlib SPJ + 导入导出 + 打包 ✅（本机验收全过；三平台 CI 待确认）
-- M5 侧边栏面板（活动栏图标 → 不写 JSON 也能用）← 当前
+- M5 侧边栏面板（活动栏图标 → 不写 JSON 也能用）✅（0.1.0 发布）
+- M6 数据总库 + 一个工作区多场比赛 + 删除题目 + 成绩单测试点详情 ✅（0.1.3）
 
 ## 代码风格
 

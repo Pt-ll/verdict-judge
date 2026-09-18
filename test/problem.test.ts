@@ -4,10 +4,13 @@ import * as path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   PROBLEM_FILE,
+  dataFilePath,
   findProblemRoot,
   loadProblem,
+  normalizeTestPath,
   resolveTestPath,
   saveProblem,
+  sharedDataDir,
 } from '../src/core/problem/package';
 
 const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verdict-problem-'));
@@ -97,8 +100,9 @@ describe('loadProblem', () => {
     const pkg = await loadProblem(dir);
 
     expect(pkg.problem.tests.map((test) => test.id)).toEqual(['2', '10']);
-    expect(pkg.problem.tests.map((test) => test.input)).toEqual(['data/2.in', 'data/10.in']);
-    expect(pkg.problem.tests.map((test) => test.answer)).toEqual(['data/2.ans', 'data/10.out']);
+    // 路径相对数据目录；0.1.2 写的 "data/2.in" 在加载时就归一成这种形态。
+    expect(pkg.problem.tests.map((test) => test.input)).toEqual(['2.in', '10.in']);
+    expect(pkg.problem.tests.map((test) => test.answer)).toEqual(['2.ans', '10.out']);
   });
 
   it('子任务没写 tests 时，用测试点的 subtask 字段补出来', async () => {
@@ -130,6 +134,123 @@ describe('loadProblem', () => {
     expect(pkg.problem.tests).toEqual([]);
     expect(pkg.problem.subtasks).toEqual([]);
     expect(pkg.problem.limits.timeMs).toBe(1000);
+  });
+});
+
+describe('测试数据总库（.verdict/data/<题目 id>）', () => {
+  /** 造一个工作区：题目包在 .verdict/problems/A，数据按 files 放到指定位置。 */
+  function makeVerdictWorkspace(files: Record<string, string>): string {
+    const root = path.join(workDir, `verdict-${packageCounter++}`);
+    for (const [relative, text] of Object.entries(files)) {
+      const target = path.join(root, relative);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, text);
+    }
+    return root;
+  }
+
+  it('题目包在 .verdict/problems/A 时，数据目录落在 .verdict/data/A', async () => {
+    const root = makeVerdictWorkspace({
+      '.verdict/problems/A/problem.json': problemJson({
+        id: 'A',
+        tests: [{ id: '1', input: '1.in', answer: '1.out', points: 100 }],
+      }),
+      '.verdict/data/A/1.in': '1 2\n',
+      '.verdict/data/A/1.out': '3\n',
+    });
+
+    const pkg = await loadProblem(path.join(root, '.verdict', 'problems', 'A'));
+
+    expect(pkg.dataDir).toBe(path.join(root, '.verdict', 'data', 'A'));
+    const first = pkg.problem.tests[0];
+    expect(first && resolveTestPath(pkg, first)).toEqual({
+      inputPath: path.join(root, '.verdict', 'data', 'A', '1.in'),
+      answerPath: path.join(root, '.verdict', 'data', 'A', '1.out'),
+    });
+  });
+
+  it('没写 tests 时从总库里扫描，路径相对数据目录', async () => {
+    const root = makeVerdictWorkspace({
+      '.verdict/problems/A/problem.json': problemJson({ id: 'A' }),
+      '.verdict/data/A/1.in': '1\n',
+      '.verdict/data/A/1.out': '1\n',
+      '.verdict/data/A/2.in': '2\n',
+      '.verdict/data/A/2.out': '2\n',
+    });
+
+    const pkg = await loadProblem(path.join(root, '.verdict', 'problems', 'A'));
+
+    expect(pkg.problem.tests.map((test) => test.id)).toEqual(['1', '2']);
+    expect(pkg.problem.tests.map((test) => test.input)).toEqual(['1.in', '2.in']);
+  });
+
+  it('包内 data/ 优先于总库：老工作区不会因为总库存在就换数据', async () => {
+    const root = makeVerdictWorkspace({
+      '.verdict/problems/A/problem.json': problemJson({ id: 'A' }),
+      '.verdict/problems/A/data/1.in': 'old\n',
+      '.verdict/problems/A/data/1.out': 'old\n',
+      '.verdict/data/A/1.in': 'new\n',
+      '.verdict/data/A/1.out': 'new\n',
+    });
+
+    const pkg = await loadProblem(path.join(root, '.verdict', 'problems', 'A'));
+
+    expect(pkg.dataDir).toBe(path.join(root, '.verdict', 'problems', 'A', 'data'));
+    expect(fs.readFileSync(dataFilePath(pkg, '1.in'), 'utf8')).toBe('old\n');
+  });
+
+  it('problem.json 写了 dataDir 就听它的（相对题目包根目录）', async () => {
+    const root = makeVerdictWorkspace({
+      '.verdict/problems/A/problem.json': problemJson({
+        id: 'A',
+        dataDir: '../../shared/A',
+        tests: [{ id: '1', input: '1.in', answer: '1.out' }],
+      }),
+      '.verdict/shared/A/1.in': 'x\n',
+      '.verdict/shared/A/1.out': 'x\n',
+    });
+
+    const pkg = await loadProblem(path.join(root, '.verdict', 'problems', 'A'));
+
+    expect(pkg.dataDir).toBe(path.join(root, '.verdict', 'shared', 'A'));
+  });
+
+  it('题目包不在 .verdict/problems 下时没有总库可言，退回包内 data/', async () => {
+    const dir = makePackage({ [PROBLEM_FILE]: problemJson({ id: 'A' }) });
+
+    const pkg = await loadProblem(dir);
+
+    expect(sharedDataDir(dir)).toBeNull();
+    expect(pkg.dataDir).toBe(path.join(dir, 'data'));
+  });
+
+  it('0.1.2 的 "data/1.in" 写法被归一成数据目录里的 "1.in"，读写都还指向同一个文件', async () => {
+    const dir = makePackage({
+      [PROBLEM_FILE]: problemJson({
+        id: 'A',
+        tests: [{ id: '1', input: 'data/1.in', answer: 'data/1.out' }],
+      }),
+      'data/1.in': '1 2\n',
+      'data/1.out': '3\n',
+    });
+    const pkg = await loadProblem(dir);
+
+    expect(pkg.problem.tests[0]?.input).toBe('1.in');
+    const first = pkg.problem.tests[0];
+    expect(first && resolveTestPath(pkg, first).inputPath).toBe(path.join(dir, 'data', '1.in'));
+
+    // 存回去之后还是能读，文件内容不变。
+    await saveProblem(pkg);
+    const reloaded = await loadProblem(dir);
+    expect(reloaded.problem.tests[0]?.input).toBe('1.in');
+    expect(fs.readFileSync(path.join(dir, 'data', '1.in'), 'utf8')).toBe('1 2\n');
+  });
+
+  it('normalizeTestPath 只剥开头那一段 data/，别的原样保留', () => {
+    expect(normalizeTestPath('data/1.in')).toBe('1.in');
+    expect(normalizeTestPath('DATA\\1.in')).toBe('1.in');
+    expect(normalizeTestPath('./data/1.in')).toBe('./data/1.in');
+    expect(normalizeTestPath('sub/1.in')).toBe('sub/1.in');
   });
 });
 

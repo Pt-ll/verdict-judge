@@ -6,6 +6,21 @@ import { SOURCE_EXTENSIONS } from './sources';
 import { isFile } from '../../util/files';
 import { isInside, toPosixRelative } from '../../util/paths';
 import {
+  CONTEST_FILE,
+  CONTESTS_DIR,
+  PROBLEMS_DIR,
+  SUBMISSIONS_FILE,
+  SUBMISSIONS_DIR,
+  VERDICT_DIR,
+  contestFileOf,
+  contestsDirOf,
+  legacyContestFileOf,
+  legacySubmissionsFileOf,
+  problemDirOf,
+  submissionsFileOf,
+  verdictDirOf,
+} from '../layout';
+import {
   ConfigIssues,
   describe,
   isObject,
@@ -16,9 +31,14 @@ import {
   readStringArray,
 } from '../../util/json';
 
-export const VERDICT_DIR = '.verdict';
-export const CONTEST_FILE = 'contest.json';
-export const PROBLEMS_DIR = 'problems';
+export {
+  CONTEST_FILE,
+  CONTESTS_DIR,
+  PROBLEMS_DIR,
+  SUBMISSIONS_FILE,
+  SUBMISSIONS_DIR,
+  VERDICT_DIR,
+};
 /** 选手源码目录：里面每个含源码的子目录都会被自动当成一名选手（见 scanPlayerFolders）。 */
 export const PLAYERS_DIR = 'players';
 export const CONTEST_JSON_VERSION = 1;
@@ -29,6 +49,10 @@ export interface ContestPackage {
   rootDir: string;
   /** .verdict 目录。 */
   verdictDir: string;
+  /** 这场比赛自己的配置文件（contests/<id>.json，或是旧的 contest.json）。 */
+  file: string;
+  /** 这场比赛的评测记录文件（submissions/<id>.json，或是旧的 submissions.json）。 */
+  submissionsFile: string;
   /** 题目 id -> 题目包根目录（.verdict/problems/<id>）。 */
   problemDirs: Map<string, string>;
   /**
@@ -40,19 +64,38 @@ export interface ContestPackage {
   autoContestants: string[];
 }
 
-export function contestPath(rootDir: string): string {
-  return path.join(rootDir, VERDICT_DIR, CONTEST_FILE);
+/** 工作区里的一场比赛：id 与它落在哪个文件上。 */
+export interface ContestRef {
+  id: string;
+  file: string;
+  /** 0.1.2 及更早的 .verdict/contest.json。 */
+  legacy: boolean;
+}
+
+/** 多场比赛的布局：.verdict/contests/<id>.json。 */
+export function contestPath(rootDir: string, contestId: string): string {
+  return contestFileOf(rootDir, contestId);
+}
+
+/** 0.1.2 及更早的单场比赛布局：.verdict/contest.json。 */
+export function legacyContestPath(rootDir: string): string {
+  return legacyContestFileOf(rootDir);
+}
+
+export function submissionsPath(rootDir: string, contestId: string): string {
+  return submissionsFileOf(rootDir, contestId);
 }
 
 export function problemDir(rootDir: string, problemId: string): string {
-  return path.join(rootDir, VERDICT_DIR, PROBLEMS_DIR, problemId);
+  return problemDirOf(rootDir, problemId);
 }
 
 /**
- * 从 startDir 向上找 .verdict/contest.json，返回工作区根目录，找不到返回 null。
+ * 从 startDir 向上找比赛的配置，返回工作区根目录，找不到返回 null。
  *
- * 与 findProblemRoot 一个思路：比赛文件固定放在工作区根的 .verdict 下，
- * 从当前文件往上找比让用户填路径可靠。给 stopDir 就只在它里面找。
+ * 命中条件是「.verdict/contest.json 存在」或「.verdict/contests/ 目录存在」——
+ * 后者是新出来的多场比赛布局，新建比赛时会连目录一起建出来。
+ * 与 findProblemRoot 一个思路：从当前文件往上找比让用户填路径可靠；给 stopDir 就只在它里面找。
  */
 export async function findContestRoot(
   startDir: string,
@@ -65,7 +108,7 @@ export async function findContestRoot(
     if (stop !== null && !isInside(dir, stop)) {
       return null;
     }
-    if (await isFile(contestPath(dir))) {
+    if ((await isFile(legacyContestPath(dir))) || (await isDirectory(contestsDirOf(dir)))) {
       return dir;
     }
     const parent = path.dirname(dir);
@@ -76,15 +119,80 @@ export async function findContestRoot(
   }
 }
 
-/** 读比赛：contest.json 里的题目 id 会被展开成真正的题目包（SPEC §6.1）。 */
-export async function loadContest(rootDir: string): Promise<ContestPackage> {
+/**
+ * 列出工作区里的全部比赛。
+ *
+ * 单场比赛的旧布局（.verdict/contest.json）与多场比赛的新布局（.verdict/contests/*.json）
+ * 同时支持：老工作区不用搬家，新工作区想开几场开几场。id 一律以文件名为准
+ * （旧布局以文件里的 id 为准），两场比赛重名会当场报错——否则「切到哪一场」是没有答案的。
+ */
+export async function listContests(rootDir: string): Promise<ContestRef[]> {
   const resolved = path.resolve(rootDir);
-  const verdictDir = path.join(resolved, VERDICT_DIR);
-  const file = contestPath(resolved);
+  const refs: ContestRef[] = [];
+
+  const legacy = legacyContestPath(resolved);
+  if (await isFile(legacy)) {
+    refs.push({ id: await readContestId(legacy, path.basename(resolved)), file: legacy, legacy: true });
+  }
+
+  for (const name of await readJsonNames(contestsDirOf(resolved))) {
+    const file = path.join(contestsDirOf(resolved), name);
+    refs.push({ id: name.slice(0, -'.json'.length), file, legacy: false });
+  }
+
+  refs.sort((left, right) => left.id.localeCompare(right.id, 'en', { numeric: true }));
+
+  const byId = new Map<string, string>();
+  for (const ref of refs) {
+    const other = byId.get(ref.id);
+    if (other !== undefined) {
+      throw new Error(
+        `两场比赛都叫 "${ref.id}"：\n  ${other}\n  ${ref.file}\n` +
+          '比赛 id 决定「榜单、记录、导出」各归各的，重名必须改掉一个。',
+      );
+    }
+    byId.set(ref.id, ref.file);
+  }
+  return refs;
+}
+
+/**
+ * 读一场比赛：contest.json 里的题目 id 会被展开成真正的题目包（SPEC §6.1）。
+ *
+ * 不传 contestId 时用排在最前面的那一场（工作区里只有一场时就是它）。
+ */
+export async function loadContest(rootDir: string, contestId?: string): Promise<ContestPackage> {
+  const resolved = path.resolve(rootDir);
+  const refs = await listContests(resolved);
+  if (refs.length === 0) {
+    throw new Error(
+      `没有找到比赛配置：${contestsDirOf(resolved)} 里没有 .json，也没有 ${legacyContestPath(resolved)}`,
+    );
+  }
+
+  const ref = contestId === undefined ? refs[0] : refs.find((item) => item.id === contestId);
+  if (ref === undefined) {
+    throw new Error(
+      `找不到比赛 "${contestId}"。工作区里有：${refs.map((item) => item.id).join('、')}`,
+    );
+  }
+  return loadContestRef(resolved, ref);
+}
+
+async function loadContestRef(resolved: string, ref: ContestRef): Promise<ContestPackage> {
+  const verdictDir = verdictDirOf(resolved);
+  const file = ref.file;
   const raw = await readJsonObject(file, (target) => fs.promises.readFile(target, 'utf8'));
 
   const issues = new ConfigIssues();
-  const id = readString(raw.id) ?? path.basename(resolved);
+  const id = ref.id;
+  if (!ref.legacy) {
+    const declared = readString(raw.id);
+    if (declared !== undefined && declared !== id) {
+      // 与题目包同一条规矩：文件名的 id 才是身份，里面写另一个名字会让人对不上号。
+      issues.add(`比赛 id "${declared}" 与文件名 "${id}.json" 不一致，两边要一致`);
+    }
+  }
   const title = readString(raw.title) ?? id;
 
   const maxRejudge = readNonNegative(raw.maxRejudge, 'maxRejudge', issues) ?? 0;
@@ -116,14 +224,17 @@ export async function loadContest(rootDir: string): Promise<ContestPackage> {
     },
     rootDir: resolved,
     verdictDir,
+    file,
+    submissionsFile: ref.legacy
+      ? legacySubmissionsFileOf(resolved)
+      : submissionsFileOf(resolved, id),
     problemDirs,
     autoContestants: discovered.map((item) => item.id),
   };
 }
 
-/** 只写 contest.json：题目包、数据与选手源码都不归这个函数管（SPEC §5.8 的同一条规矩）。 */
+/** 只写这场比赛自己的配置文件：题目包、数据与选手源码都不归它管（SPEC §5.8 的同一条规矩）。 */
 export async function saveContest(pkg: ContestPackage): Promise<void> {
-  const file = contestPath(pkg.rootDir);
   // 自动发现的选手不写回文件：它们随时能从 players/ 重新算出来，
   // 写进去只会让「改了一道题」顺带变成一次选手列表的改动。
   const auto = new Set(pkg.autoContestants);
@@ -132,8 +243,27 @@ export async function saveContest(pkg: ContestPackage): Promise<void> {
     contestants: pkg.contest.contestants.filter((item) => !auto.has(item.id)),
   };
   const text = `${JSON.stringify(serializeContest(contest), null, 2)}\n`;
-  await fs.promises.mkdir(path.dirname(file), { recursive: true });
-  await fs.promises.writeFile(file, text, 'utf8');
+  await fs.promises.mkdir(path.dirname(pkg.file), { recursive: true });
+  await fs.promises.writeFile(pkg.file, text, 'utf8');
+}
+
+/** 新建比赛的落点：总在 contests/ 下，不会去动旧的 contest.json。 */
+export function newContestFile(rootDir: string, contestId: string): string {
+  return contestFileOf(rootDir, contestId);
+}
+
+/** 把一道题加进比赛（题目库是共用的，多场比赛可以同时列出同一道题）。 */
+export function addProblemToContest(contest: Contest, problem: Problem): Contest {
+  if (contest.problems.some((item) => item.id === problem.id)) {
+    return contest;
+  }
+  return { ...contest, problems: [...contest.problems, problem] };
+}
+
+/** 把一道题从比赛里摘掉。题目包与数据都留着，只是这场比赛不再考它。 */
+export function removeProblemFromContest(contest: Contest, problemId: string): Contest {
+  const problems = contest.problems.filter((item) => item.id !== problemId);
+  return problems.length === contest.problems.length ? contest : { ...contest, problems };
 }
 
 function readContestants(raw: unknown, issues: ConfigIssues): Contestant[] {
@@ -286,4 +416,46 @@ function serializeContest(contest: Contest): Record<string, unknown> {
     problems: contest.problems.map((problem) => problem.id),
     contestants: contest.contestants,
   };
+}
+
+/** contests/ 下所有 .json 的文件名；目录不存在就当空（还没有多场比赛而已）。 */
+async function readJsonNames(dir: string): Promise<string[]> {
+  let entries: fs.Dirent[];
+  try {
+    entries = await fs.promises.readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter(
+      (entry) =>
+        entry.isFile() &&
+        !entry.name.startsWith('.') &&
+        entry.name.toLowerCase().endsWith('.json'),
+    )
+    .map((entry) => entry.name)
+    .sort();
+}
+
+/**
+ * 旧布局（.verdict/contest.json）里比赛 id 是写在文件里的，这里读出来当身份。
+ *
+ * 文件被改坏时退回工作区目录名：调用方随后会走到真正的加载，那里会把 JSON 的错误
+ * 完整报出来；这一步只负责给比赛起个能显示的名字。
+ */
+async function readContestId(file: string, fallback: string): Promise<string> {
+  try {
+    const raw = await readJsonObject(file, (target) => fs.promises.readFile(target, 'utf8'));
+    return readString(raw.id) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function isDirectory(target: string): Promise<boolean> {
+  try {
+    return (await fs.promises.stat(target)).isDirectory();
+  } catch {
+    return false;
+  }
 }

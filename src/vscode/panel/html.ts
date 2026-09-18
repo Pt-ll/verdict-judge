@@ -374,11 +374,27 @@ const SCRIPT = `
       node.appendChild(el('span', null, problem.name));
       node.appendChild(el('span', 'meta', problem.broken
         ? '读不出来'
-        : problem.testCount + ' 点 · 满分 ' + problem.maxScore));
+        : (problem.inContest ? '★ ' : '') + problem.testCount + ' 点 · 满分 ' + problem.maxScore));
       if (problem.broken) { node.title = problem.broken; }
       node.addEventListener('click', function () {
         post({ type: 'selectProblem', problemId: problem.id });
       });
+      var tools = el('span', 'tools');
+      if (state.contest) {
+        if (problem.inContest) {
+          tools.appendChild(iconButton('−', '从当前比赛移除（题目包与数据都保留）', function () {
+            post({ type: 'command', command: 'verdict.removeProblemFromContest', arg: problem.id });
+          }));
+        } else {
+          tools.appendChild(iconButton('＋', '把这道题加进当前比赛', function () {
+            post({ type: 'command', command: 'verdict.addProblemToContest', arg: problem.id });
+          }));
+        }
+      }
+      tools.appendChild(iconButton('🗑', '删除这道题（可选是否连数据一起删）', function () {
+        post({ type: 'command', command: 'verdict.deleteProblem', arg: problem.id });
+      }));
+      node.appendChild(tools);
       box.appendChild(node);
     });
     return box;
@@ -523,6 +539,27 @@ const SCRIPT = `
     var contestCard = el('div', 'card');
     contestCard.appendChild(el('h2', null, '比赛'));
     if (state.contest) {
+      // 多场比赛：下拉框切一场，面板里的题目、测试点、榜单都跟着换（SPEC §6.2）。
+      var picker = el('div', 'row');
+      var select = document.createElement('select');
+      select.style.flex = '1 1 auto';
+      state.contest.all.forEach(function (item) {
+        var option = document.createElement('option');
+        option.value = item.id;
+        option.textContent = item.title + (item.title === item.id ? '' : '（' + item.id + '）') +
+          (item.legacy ? ' · contest.json' : '');
+        if (item.active) { option.selected = true; }
+        select.appendChild(option);
+      });
+      select.addEventListener('change', function () {
+        post({ type: 'selectContest', contestId: select.value });
+      });
+      picker.appendChild(select);
+      picker.appendChild(button('＋', '再开一场比赛（题目可以重复用）', function () {
+        post({ type: 'command', command: 'verdict.newContest' });
+      }));
+      contestCard.appendChild(picker);
+
       var line = el('div', 'kv');
       line.appendChild(el('span', null, state.contest.title));
       line.appendChild(el('span', 'mono', state.contest.id));
@@ -531,12 +568,16 @@ const SCRIPT = `
       contestCard.appendChild(el('div', 'hint',
         state.contest.contestants.length + ' 名选手' +
         (autoCount > 0 ? '（其中 ' + autoCount + ' 名来自 players/ 自动发现）' : '') +
-        ' · 重测上限 ' + state.contest.maxRejudge + ' 次'));
+        ' · 重测上限 ' + state.contest.maxRejudge + ' 次 · 题目 ' +
+        state.contest.problemIds.length + ' 道'));
+      contestCard.appendChild(el('div', 'hint', '题目配置 ' + state.contest.problemsDir +
+        ' · 测试数据 ' + state.contest.dataDir));
       if (state.contest.error) {
-        contestCard.appendChild(el('div', 'hint', 'contest.json 读不出来：' + state.contest.error));
+        contestCard.appendChild(el('div', 'hint', '比赛配置读不出来：' + state.contest.error));
       }
     } else {
-      contestCard.appendChild(el('div', 'hint', '还没有比赛：新建一个才能评测全部与出榜。'));
+      contestCard.appendChild(el('div', 'hint',
+        '还没有比赛：新建一个才能评测全部与出榜。一个工作区可以放好几场比赛，题目可以重复用。'));
       var contestRow = el('div', 'row');
       contestRow.appendChild(button('＋ 新建比赛', null, function () {
         post({ type: 'command', command: 'verdict.newContest' });
@@ -565,6 +606,15 @@ const SCRIPT = `
     });
     exportButton.disabled = state.selected === null;
     tools.appendChild(exportButton);
+    var deleteButton = button('删除题目…', '题目包可选是否连数据一起删', function () {
+      post({
+        type: 'command',
+        command: 'verdict.deleteProblem',
+        arg: state.selected === null ? undefined : state.selected.id
+      });
+    });
+    deleteButton.disabled = state.selected === null;
+    tools.appendChild(deleteButton);
     listCard.appendChild(tools);
     box.appendChild(listCard);
 
@@ -793,7 +843,8 @@ const SCRIPT = `
 
     if (problem.tests.length === 0) {
       box.appendChild(el('p', 'hint',
-        '还没有测试点：把 1.in / 1.out 放进 data/ 目录，再点下面的「扫描新测试点」。'));
+        '还没有测试点：把 1.in / 1.out 放进 ' + problem.dataDir +
+        '，再点下面的「扫描新测试点」。'));
     }
 
     var byId = {};
@@ -853,13 +904,13 @@ const SCRIPT = `
 
     var standings = state.standings;
     if (!standings) {
-      box.appendChild(el('p', 'hint', '比赛配置读不出来，先把 contest.json 与题目包修好。'));
+      box.appendChild(el('p', 'hint', '比赛配置读不出来，先把比赛配置与题目包修好。'));
       return box;
     }
     var autoPlayers = state.contest.contestants.filter(function (item) { return item.auto; }).length;
     if (autoPlayers > 0) {
       box.appendChild(el('p', 'hint',
-        '其中 ' + autoPlayers + ' 名选手是从 players/ 自动发现的（放进去就算，不用改 contest.json）。'));
+        '其中 ' + autoPlayers + ' 名选手是从 players/ 自动发现的（放进去就算，不用改比赛配置）。'));
     }
     if (standings.ranks.length === 0) {
       box.appendChild(el('p', 'hint', '这场比赛还没有选手。'));
@@ -953,7 +1004,7 @@ const SCRIPT = `
       post({ type: 'refresh' });
     }));
     if (state.contest && state.contest.error) {
-      row.appendChild(button('打开 contest.json', null, function () {
+      row.appendChild(button('打开比赛配置', null, function () {
         post({ type: 'openContestJson' });
       }));
     }

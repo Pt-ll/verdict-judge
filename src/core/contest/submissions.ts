@@ -5,7 +5,7 @@ import type { CaseResult, ProblemResult, Submission, SubtaskResult, Verdict } fr
 import { ConfigIssues, describe, isObject, readJsonObject, readNonNegative, readString } from '../../util/json';
 import { submissionKey } from './standings';
 
-export const SUBMISSIONS_FILE = 'submissions.json';
+export { SUBMISSIONS_FILE } from '../layout';
 export const SUBMISSIONS_JSON_VERSION = 1;
 
 /**
@@ -13,9 +13,11 @@ export const SUBMISSIONS_JSON_VERSION = 1;
  *
  * 文件是机器写的，读不出来通常意味着被改坏了；这时直接报错而不是猜，
  * 因为重跑一次评测就能重建它（而且比猜测更可信）。
+ *
+ * 参数是**文件路径**而不是目录：0.1.3 起每场比赛的记录各占一个文件
+ * （.verdict/submissions/<比赛 id>.json），单场比赛的旧 .verdict/submissions.json 也照读。
  */
-export async function loadSubmissions(verdictDir: string): Promise<Submission[]> {
-  const file = path.join(verdictDir, SUBMISSIONS_FILE);
+export async function loadSubmissions(file: string): Promise<Submission[]> {
   if (!(await exists(file))) {
     return [];
   }
@@ -41,16 +43,15 @@ export async function loadSubmissions(verdictDir: string): Promise<Submission[]>
 }
 
 export async function saveSubmissions(
-  verdictDir: string,
+  file: string,
   submissions: Submission[],
 ): Promise<void> {
-  const file = path.join(verdictDir, SUBMISSIONS_FILE);
   const text = `${JSON.stringify(
     { version: SUBMISSIONS_JSON_VERSION, submissions: submissions.map(toStored) },
     null,
     2,
   )}\n`;
-  await fs.promises.mkdir(verdictDir, { recursive: true });
+  await fs.promises.mkdir(path.dirname(file), { recursive: true });
   await fs.promises.writeFile(file, text, 'utf8');
 }
 

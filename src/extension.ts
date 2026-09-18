@@ -64,15 +64,18 @@ export function activate(context: vscode.ExtensionContext): VerdictApi {
   const commands = registerCommands({ context, output, status, diagnostics, caseDocs });
   // 改题目包的命令要刷新 Testing 树，而 Testing 跑测试又要用命令的评测入口——
   // 用一个小 hooks 对象打破这个环：先占位，两边都装配好之后再填上真正的实现。
-  const hooks: { refreshTests: () => Promise<void> } = {
+  const hooks: { refreshTests: () => Promise<void>; activeContestId: () => string | null } = {
     refreshTests: async () => undefined,
+    activeContestId: () => null,
   };
   const problemCommands = registerProblemCommands({
     output,
     caseDocs,
     refreshTests: () => hooks.refreshTests(),
+    activeContestId: () => hooks.activeContestId(),
   });
   const contest = registerContestCommands({ context, output, status });
+  hooks.activeContestId = () => contest.session.activeId();
   const testing = registerTesting({
     output,
     judgeInPackage: (document, request) => commands.judgeDocumentInPackage(document, request),

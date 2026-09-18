@@ -307,6 +307,9 @@ Testing 面板与编辑器标签页里。所以补一个常驻面板：**活动�
 - 「题目」页签：比赛信息（没有就一键新建）、题目列表、新建/导入/导出题目包、
   选中题目的**限制**与**比较方式**（五种模式都能在这里改，real 的 eps 与 spj / interactor
   的文件用文件选择器指定）。
+- 顶部是**比赛选择器**：一个工作区可以有好几场，切换后题目、测试点、榜单全跟着换（§6.2）；
+  旁边就是「再开一场」。题目行上有 `＋` / `−`（加入 / 移出当前比赛，题目库是共用的）
+  与 `🗑`（删题：只从比赛移除 / 删题目包 / 连数据一起删，删除走系统回收站）。
 - 「测试点」页签：按子任务分组的测试点表；每行给出最近一次判定、用时、内存，
   `▶` 只跑这一个点、`🐞` 用它起调试、`⇄` 开 diff、`▸` 展开看输入 / 标准答案 / 实际输出；
   子任务能改分值、依赖与组内计分（min / sum），也能增删、按点均分、清空；
@@ -320,12 +323,12 @@ Testing 面板与编辑器标签页里。所以补一个常驻面板：**活动�
 
 | 方向 | 消息 | 说明 |
 | --- | --- | --- |
-| 面板 → 扩展 | `ready` / `refresh` / `selectProblem` | 就绪、刷新、切换当前题目 |
+| 面板 → 扩展 | `ready` / `refresh` / `selectProblem` / `selectContest` | 就绪、刷新、切换当前题目、切换当前比赛 |
 | 面板 → 扩展 | `judge` / `judgeCase` / `debug` / `debugCase` / `openDiff` | 评测与运行 |
 | 面板 → 扩展 | `setLimits` / `setComparator` / `pickComparatorFile` | 改限制与比较方式 |
 | 面板 → 扩展 | `scanTests` / `moveTest` / `removeTest` / `addSubtask` / `removeSubtask` / `updateSubtask` / `evenSubtasks` / `clearSubtasks` | 改测试点与子任务 |
 | 面板 → 扩展 | `openCaseFile` / `openDataDir` / `openProblemJson` | 用编辑器打开文件，不重造编辑器 |
-| 面板 → 扩展 | `rejudge` / `cancel` / `command` | 重测、取消、执行白名单里的命令 |
+| 面板 → 扩展 | `rejudge` / `cancel` / `command` | 重测、取消、执行白名单里的命令（`command` 可带一个 `arg`，例如题目 id） |
 | 扩展 → 面板 | `data` | 比赛、题目、测试点、最近结果、榜单 |
 | 扩展 → 面板 | `busy` / `notice` / `filePicked` | 进度、需要用户知道的一句话、选中的文件路径 |
 
@@ -728,14 +731,30 @@ export function splitmix64(seed: bigint): Rng;
 
 ```text
 .verdict/
-├── contest.json               # 比赛：题目/选手/重测上限/榜单配置
-├── submissions.json           # 提交记录（可选，便于榜单恢复）
+├── contests/                  # 每场比赛一个文件，可以放好几场（§6.2）
+│   └── <contestId>.json
+├── submissions/               # 提交记录，一场一份（运行产物，可选，便于榜单恢复）
+│   └── <contestId>.json
+├── data/                      # 测试数据总库：一个题目一个文件夹，用文件夹名区分题目
+│   └── <problemId>/           # 1.in 1.out 2.in 2.out ...
 └── problems/
     └── <problemId>/
         ├── problem.json       # 题目：类型/限制/比较/子任务/测试点
-        ├── data/              # 1.in 1.out 2.in 2.out ...
         └── extra/             # std.cpp checker.cpp interactor.cpp gen.cpp ...
 ```
+
+**数据目录的解析顺序**（实现见 `src/core/problem/package.ts`）：
+
+1. `problem.json` 的 `dataDir`（显式指定，相对题目包根目录）；
+2. `<题目包>/data`（0.1.2 及更早的布局：存在就用它，老工作区不用搬数据）；
+3. `.verdict/data/<problemId>`（测试数据总库，0.1.3 起新建题目的默认位置）。
+
+第 3 条只在题目包位于 `.verdict/problems/<id>/` 时成立——题目包可以被放在工作区任何地方，
+那种情况下没有「总库」可言，退回包内的 `data/`。0.1.2 与 0.1.3 两套布局因此能共存。
+
+测试点路径（`tests[].input` / `answer`）**相对数据目录**。旧文件里写的 `data/1.in`
+（相对题目包根目录）在加载时被归一成 `1.in`：两种写法指向同一个文件，不迁移也能跑。
+真要引用数据目录里名为 `data` 的子目录，写成 `./data/x.in` 就不会被归一。
 
 ### 6.2 `contest.json`
 
@@ -752,6 +771,17 @@ export function splitmix64(seed: bigint): Rng;
   ]
 }
 ```
+
+0.1.3 起比赛文件落在 `.verdict/contests/<contestId>.json`：**一个工作区可以放好几场比赛**，
+id 以文件名为准（文件里的 `id` 字段与文件名不一致会当场报错），重名同样报错。
+0.1.2 的 `.verdict/contest.json` 继续读（`id` 取文件里的字段），两种布局可以共存。
+评测记录跟着比赛走：新布局是 `.verdict/submissions/<contestId>.json`，
+旧布局仍是 `.verdict/submissions.json`。
+
+**题目库是全局共用的**：比赛只记题目 id 列表，题目包与数据都在 `.verdict/` 下各占一份。
+于是同一道题可以同时出现在多场比赛里，各场的分数、榜单、重测次数互不干扰；
+「把题目加入 / 移出当前比赛」改的只是这一场的 id 列表（面板上的 `＋` / `−`，
+命令 `verdict.addProblemToContest` / `verdict.removeProblemFromContest`）。
 
 `problems` 可以是空数组——刚建出来的比赛就是这样（先建比赛、再加题）；`contestants` 也可以不写：
 `players/` 下每个**含源码的子目录**会被自动当成一名选手（id 与显示名取目录名，按数字感知排序）。
@@ -772,7 +802,7 @@ export function splitmix64(seed: bigint): Rng;
     { "id": "2", "points": 70, "tests": ["4","5","6"], "dependsOn": ["1"], "scoring": "min" }
   ],
   "tests": [
-    { "id": "1", "input": "data/1.in", "answer": "data/1.out", "points": 10, "subtask": "1" }
+    { "id": "1", "input": "1.in", "answer": "1.out", "points": 10, "subtask": "1" }
   ],
   "sourceDir": "players/*/A",
   "answerDir": "players/*/A"
@@ -782,7 +812,10 @@ export function splitmix64(seed: bigint): Rng;
 字段说明（实现见 `src/core/problem/package.ts`；加载时校验，一次列出全部问题）：
 
 - `tests` 可以省略（或写 `[]`）：此时扫描 `data/` 下的 `1.in/1.out`、`*.ans`、`sample*` 等命名约定，
-  按数字序排列（`2` 排在 `10` 前）。测试点路径一律相对**题目包根目录**，即写成 `data/1.in`。
+  按数字序排列（`2` 排在 `10` 前）。测试点路径一律相对**数据目录**（§6.1），即写成 `1.in`；
+  0.1.2 的 `data/1.in` 也照读（加载时归一）。
+- `dataDir` 可选：数据放在别处时写它（相对题目包根目录，例如 `"../../shared/A"`）。
+  既不是包内 `data/`、也不是总库约定位置时才写回文件——约定位置跟着题目包算，搬走也不会失效。
 - 子任务成员关系以 `subtasks[].tests` 为准；只有它是空的时候，才用测试点的 `subtask` 字段补出来。
   两边说法不一致会直接报错——宁可让人改一处配置，也不要悄悄按其中一个算分。
 - 非法数值、引用不存在的测试点或子任务、依赖成环、重复 id、空子任务，都会在加载时报错。
@@ -994,6 +1027,17 @@ exitCode != 0          -> RE
 - 单点运行只更新那一个测试点，且分数被标成 partial、不当作整题结论展示。
 - 面板里没有网络请求、没有 `innerHTML` 拼串（单测断言）。
 
+### M6 — 数据总库 + 多场比赛 + 删题 + 成绩单详情（0.1.3）
+交付：`.verdict/data/<题目 id>/` 总库与 `dataDir` 解析（含旧布局兼容）、
+`.verdict/contests/<id>.json` 多场比赛与题目重叠、`verdict.deleteProblem`
+（含「连数据一起删」与跨比赛摘除）、导出的成绩单带上逐题逐测试点详情、
+面板上的比赛切换器与题目 `＋` / `−` / `🗑`。
+验收：
+- 老工作区（`.verdict/contest.json` + 包内 `data/` + `"data/1.in"`）不改一行也能继续评测。
+- 同一道题出现在两场比赛里时，两边的榜单、重测计数、导出互不影响。
+- 删题给的三个选项都只动该动的东西；题目在别的比赛里时先摘干净，不留下加载不出来的比赛。
+- 导出的 HTML 断网可开，且不点任何单元格就能看到每道题的测试点清单。
+
 ---
 
 ## 13. 目录结构
@@ -1013,6 +1057,7 @@ verdict/
 │   ├── extension.ts          # activate / deactivate
 │   ├── core/                 # 平台无关内核（不 import vscode）
 │   │   ├── model.ts
+│   │   ├── layout.ts         # 工作区布局常量与拼路径（§6.1）
 │   │   ├── compiler.ts
 │   │   ├── sandbox/
 │   │   │   ├── sandbox.ts    # 接口与工厂
@@ -1113,6 +1158,18 @@ verdict/
       "type": "extensionHost",
       "request": "launch",
       "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: watch"
+    },
+    {
+      // 直接以样例工作区启动，省掉「开发宿主里再开一次文件夹」这一步。
+      "name": "运行扩展（testdata 工作区）",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "${workspaceFolder}/testdata"
+      ],
       "outFiles": ["${workspaceFolder}/dist/**/*.js"],
       "preLaunchTask": "npm: watch"
     }
@@ -1358,7 +1415,7 @@ ZIP（`[Content_Types].xml` + `extension.vsixmanifest` + `extension/**`），复
 
 ```bash
 pnpm package                                             # 生成 dist/verdict-<版本>.vsix
-code --install-extension dist/verdict-judge-0.1.1.vsix         # 安装
+code --install-extension dist/verdict-judge-0.1.3.vsix   # 安装
 ```
 
 ---

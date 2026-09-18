@@ -22,7 +22,7 @@ export interface AddTestsPlan {
  * 只比文件的话，同一份数据换个 id 也会重复。两种都会让 problem.json 变得难读。
  */
 export async function planAddTests(pkg: ProblemPackage): Promise<AddTestsPlan> {
-  const scanned = await scanPackageTests(pkg.rootDir, pkg.dataDir);
+  const scanned = await scanPackageTests(pkg.dataDir);
   const knownIds = new Set(pkg.problem.tests.map((test) => test.id));
   const knownInputs = new Set(pkg.problem.tests.map((test) => test.input));
 

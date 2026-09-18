@@ -14,6 +14,7 @@ import { scanTests } from './scan';
 import { topoOrderSubtasks } from './subtasks';
 import { isFile } from '../../util/files';
 import { isInside } from '../../util/paths';
+import { DATA_DIR, PROBLEMS_DIR, VERDICT_DIR } from '../layout';
 import {
   ConfigIssues,
   describe,
@@ -33,7 +34,7 @@ export interface ProblemPackage {
   problem: Problem;
   /** problem.json 所在目录。 */
   rootDir: string;
-  /** 测试数据目录，默认 rootDir/data。 */
+  /** 测试数据目录；见 resolveDataDir 的解析顺序。 */
   dataDir: string;
   /** checker / interactor / std / gen，默认 rootDir/extra。 */
   extraDir: string;
@@ -47,12 +48,56 @@ export async function loadProblem(rootDir: string): Promise<ProblemPackage> {
     fs.promises.readFile(target, 'utf8'),
   );
 
-  const dataDir = path.join(resolved, 'data');
+  const dataDir = await resolveDataDir(resolved, raw);
   const issues = new ConfigIssues();
   const problem = await buildProblem(raw, { rootDir: resolved, dataDir, issues });
   issues.throwIfAny(problemPath);
 
   return { problem, rootDir: resolved, dataDir, extraDir: path.join(resolved, 'extra') };
+}
+
+/**
+ * 测试数据目录的解析顺序（SPEC §6.1）：
+ *
+ * 1. `problem.json` 里的 `dataDir`——显式指定，相对题目包根目录，想放哪就放哪；
+ * 2. `<题目包>/data`——0.1.2 及更早的布局，存在就继续用，老工作区不用搬数据；
+ * 3. `<.verdict>/data/<题目 id>`——测试数据总库，0.1.3 起新建题目的默认位置。
+ *
+ * 第 3 条只在题目包位于 `.verdict/problems/<id>/` 时成立（见 sharedDataDir）：
+ * 题目包可以被放在工作区任何地方，那种情况下没有「总库」可言，退回包内的 data/。
+ */
+export async function resolveDataDir(
+  rootDir: string,
+  raw: Record<string, unknown> = {},
+): Promise<string> {
+  const explicit = readString(raw.dataDir);
+  if (explicit !== undefined && explicit.trim().length > 0) {
+    return path.resolve(rootDir, explicit);
+  }
+  const local = path.join(rootDir, DATA_DIR);
+  if (await isDirectory(local)) {
+    return local;
+  }
+  return sharedDataDir(rootDir) ?? local;
+}
+
+/**
+ * 题目包在 `.verdict/problems/<id>/` 里时，它在数据总库里的目录是 `.verdict/data/<id>`；
+ * 别处的题目包返回 null。
+ *
+ * 只看路径不看工作区配置：这样 loadProblem 不必知道工作区在哪，单测与
+ * 「把别人给的一整个题目目录直接丢进工作区」这两种情况都照常工作。
+ */
+export function sharedDataDir(rootDir: string): string | null {
+  const problemsRoot = path.dirname(rootDir);
+  const verdictRoot = path.dirname(problemsRoot);
+  if (path.basename(problemsRoot) !== PROBLEMS_DIR) {
+    return null;
+  }
+  if (path.basename(verdictRoot) !== VERDICT_DIR) {
+    return null;
+  }
+  return path.join(verdictRoot, DATA_DIR, path.basename(rootDir));
 }
 
 /**
@@ -63,20 +108,40 @@ export async function loadProblem(rootDir: string): Promise<ProblemPackage> {
  */
 export async function saveProblem(pkg: ProblemPackage): Promise<void> {
   const target = path.join(pkg.rootDir, PROBLEM_FILE);
-  const text = `${JSON.stringify(serializeProblem(pkg.problem), null, 2)}\n`;
+  const text = `${JSON.stringify(serializeProblem(pkg), null, 2)}\n`;
   await fs.promises.mkdir(pkg.rootDir, { recursive: true });
   await fs.promises.writeFile(target, text, 'utf8');
 }
 
-/** 把测试点的相对路径还原成绝对路径（基准是题目包根目录，SPEC §6.3）。 */
+/** 把测试点的相对路径还原成绝对路径（基准是数据目录，SPEC §6.3）。 */
 export function resolveTestPath(
   pkg: ProblemPackage,
   test: TestCase,
 ): { inputPath: string; answerPath: string } {
   return {
-    inputPath: path.join(pkg.rootDir, test.input),
-    answerPath: path.join(pkg.rootDir, test.answer),
+    inputPath: dataFilePath(pkg, test.input),
+    answerPath: dataFilePath(pkg, test.answer),
   };
+}
+
+/** 数据目录里的一个相对路径 → 绝对路径（面板、Testing、调试都用它，别再各自拼 rootDir）。 */
+export function dataFilePath(pkg: ProblemPackage, relative: string): string {
+  return path.join(pkg.dataDir, relative);
+}
+
+/**
+ * 测试点路径的兼容处理。
+ *
+ * 0.1.2 及更早写的路径相对**题目包根目录**（`data/1.in`），0.1.3 起相对**数据目录**
+ * （`1.in`）——因为数据可能根本不在包里（总库布局）。这两种写法指向同一个文件，
+ * 所以加载时统一剥掉 `data/` 前缀，内存里只剩一种形态。
+ * 真要引用数据目录里名为 data 的子目录，写成 `./data/x.in` 就不会被剥掉。
+ */
+export function normalizeTestPath(relative: string): string {
+  const unified = relative.split('\\').join('/');
+  return unified.toLowerCase().startsWith(`${DATA_DIR}/`)
+    ? unified.slice(DATA_DIR.length + 1)
+    : unified;
 }
 
 /**
@@ -302,7 +367,7 @@ function readSubtasks(raw: unknown, issues: ConfigIssues): Subtask[] {
 async function readTests(raw: unknown, ctx: BuildContext): Promise<TestCase[]> {
   const { issues } = ctx;
   if (raw === undefined) {
-    return scanPackageTests(ctx.rootDir, ctx.dataDir);
+    return scanPackageTests(ctx.dataDir);
   }
   if (!Array.isArray(raw)) {
     issues.add(`tests 必须是数组，现在是 ${describe(raw)}`);
@@ -310,7 +375,7 @@ async function readTests(raw: unknown, ctx: BuildContext): Promise<TestCase[]> {
   }
   if (raw.length === 0) {
     // 空数组按「没写」处理：想自动扫描的人不该因为写了 [] 而没有测试点。
-    return scanPackageTests(ctx.rootDir, ctx.dataDir);
+    return scanPackageTests(ctx.dataDir);
   }
 
   const tests: TestCase[] = [];
@@ -344,7 +409,11 @@ async function readTests(raw: unknown, ctx: BuildContext): Promise<TestCase[]> {
       return;
     }
 
-    const test: TestCase = { id, input, answer };
+    const test: TestCase = {
+      id,
+      input: normalizeTestPath(input),
+      answer: normalizeTestPath(answer),
+    };
     const points = readNonNegative(item.points, `测试点 "${id}" 的 points`, issues);
     if (points !== undefined) {
       test.points = points;
@@ -363,23 +432,20 @@ async function readTests(raw: unknown, ctx: BuildContext): Promise<TestCase[]> {
 }
 
 /**
- * 扫描 data/，返回路径相对题目包根目录的测试点。
+ * 扫描数据目录，返回路径相对**数据目录**的测试点。
  *
  * 没有 problem.json 的 tests 也能用：丢进去 1.in + 1.out 就是一个测试点（约定优于配置）。
  */
-export async function scanPackageTests(rootDir: string, dataDir: string): Promise<TestCase[]> {
-  const scanned = await scanTests(dataDir);
-  return scanned.map((test) => ({
-    id: test.id,
-    // scanTests 给的是相对 data/ 的名字，统一换算成题目包根目录（SPEC §6.3 写 "data/1.in"）。
-    input: toPackageRelative(rootDir, path.join(dataDir, test.input)),
-    answer: toPackageRelative(rootDir, path.join(dataDir, test.answer)),
-  }));
+export async function scanPackageTests(dataDir: string): Promise<TestCase[]> {
+  return scanTests(dataDir);
 }
 
-function toPackageRelative(rootDir: string, absolute: string): string {
-  // problem.json 要进 git、要跨平台共享，所以统一用 / 分隔（AGENTS「三平台约定」）。
-  return path.relative(rootDir, absolute).split(path.sep).join('/');
+async function isDirectory(target: string): Promise<boolean> {
+  try {
+    return (await fs.promises.stat(target)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function validateProblem(problem: Problem, issues: ConfigIssues): void {
@@ -433,7 +499,8 @@ function validateProblem(problem: Problem, issues: ConfigIssues): void {
   }
 }
 
-function serializeProblem(problem: Problem): Record<string, unknown> {
+function serializeProblem(pkg: ProblemPackage): Record<string, unknown> {
+  const { problem } = pkg;
   // 先摊开 _raw 再覆盖已知字段：原文件里被改过的旧值不会盖掉新值，未知字段也不会丢（SPEC §6.5）。
   return {
     ...(problem._raw ?? {}),
@@ -447,5 +514,21 @@ function serializeProblem(problem: Problem): Record<string, unknown> {
     tests: problem.tests,
     ...(problem.sourceDir === undefined ? {} : { sourceDir: problem.sourceDir }),
     ...(problem.answerDir === undefined ? {} : { answerDir: problem.answerDir }),
+    ...dataDirField(pkg),
   };
+}
+
+/**
+ * `dataDir` 只在数据目录既不是包内 data/、也不是总库约定位置时才写回。
+ *
+ * 约定位置不落盘是有意的：题目目录被整体搬走（或者导出的包在另一台机器上解开）时，
+ * 相对路径会失效，而约定位置是跟着题目包算出来的，永远有效。
+ */
+function dataDirField(pkg: ProblemPackage): Record<string, unknown> {
+  const local = path.join(pkg.rootDir, DATA_DIR);
+  if (pkg.dataDir === local || pkg.dataDir === sharedDataDir(pkg.rootDir)) {
+    return {};
+  }
+  const relative = path.relative(pkg.rootDir, pkg.dataDir).split(path.sep).join('/');
+  return { dataDir: relative.length === 0 ? '.' : relative };
 }

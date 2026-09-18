@@ -25,7 +25,11 @@ const COMMANDS = [
   'verdict.debugCase',
   // M3 的比赛类命令（同样只验注册：它们大多要弹对话框或起 WebView）。
   'verdict.newContest',
+  'verdict.switchContest',
   'verdict.newProblem',
+  'verdict.deleteProblem',
+  'verdict.addProblemToContest',
+  'verdict.removeProblemFromContest',
   'verdict.judgeAll',
   'verdict.rejudge',
   'verdict.showStandings',
@@ -189,9 +193,23 @@ async function checkControlPanel(api, root) {
   const state = api.panelState();
   assert.ok(state, '刷新之后应当拿到面板状态');
   assert.equal(state.contest && state.contest.id, 'demo', '面板应当显示工作区里的比赛');
+  assert.deepEqual(
+    state.contest.all.map((item) => item.id),
+    ['demo'],
+    '面板应当列出工作区里的全部比赛（testdata 用 .verdict/contests/demo.json）',
+  );
   assert.ok(
     state.problems.some((item) => item.id === 'A') && state.problems.some((item) => item.id === 'B'),
     `面板应当列出工作区里的题目，实际：${state.problems.map((item) => item.id).join('、')}`,
+  );
+  // 测试数据总库：题目包在 .verdict/problems/，数据在 .verdict/data/<题目 id>/。
+  assert.ok(
+    state.problems.every((item) => item.dataDir.endsWith(path.join('.verdict', 'data', item.id))),
+    `测试数据应当落在总库里，实际：${state.problems.map((item) => item.dataDir).join('、')}`,
+  );
+  assert.ok(
+    state.problems.every((item) => item.inContest),
+    'demo 这场比赛的题目都应当标着「在比赛里」',
   );
 
   await api.dispatchPanel({ type: 'selectProblem', problemId: 'A' });
@@ -246,6 +264,59 @@ async function checkControlPanel(api, root) {
   }
   assert.equal(fs.readFileSync(file, 'utf8'), original, '样例数据要逐字节还原');
   console.log('[verdict] 侧边栏面板：编辑直接落盘到 problem.json，样例数据已还原');
+
+  await checkContestPool(api, root);
+}
+
+/**
+ * 多场比赛与共用题目库（0.1.3）。
+ *
+ * 题目库是全局的，比赛只记题目 id 列表——所以「同一道题出现在两场比赛里」是自然的，
+ * 面板上的 ＋ / − 就是往当前这场比赛的列表里加减。这里验的是那条路真的写进了
+ * contests/<id>.json，以及加回来之后文件能逐字节还原。
+ */
+async function checkContestPool(api, root) {
+  const file = path.join(root.fsPath, '.verdict', 'contests', 'demo.json');
+  const original = fs.readFileSync(file, 'utf8');
+  try {
+    await api.dispatchPanel({
+      type: 'command',
+      command: 'verdict.removeProblemFromContest',
+      arg: 'B',
+    });
+    await api.dispatchPanel({ type: 'refresh' });
+    let state = api.panelState();
+    assert.ok(
+      state.problems.find((item) => item.id === 'B').inContest === false,
+      '移出比赛之后，B 不该再标着「在比赛里」',
+    );
+    assert.ok(
+      state.contest.problemIds.includes('B') === false,
+      '移出比赛之后，比赛配置里不该还有 B',
+    );
+    const written = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.deepEqual(
+      written.problems,
+      ['A', 'C'],
+      `移出比赛要立刻写进 contests/demo.json，实际：${JSON.stringify(written.problems)}`,
+    );
+
+    await api.dispatchPanel({
+      type: 'command',
+      command: 'verdict.addProblemToContest',
+      arg: 'B',
+    });
+    await api.dispatchPanel({ type: 'refresh' });
+    state = api.panelState();
+    assert.ok(
+      state.problems.find((item) => item.id === 'B').inContest === true,
+      '加回比赛之后，B 应当又标着「在比赛里」',
+    );
+    console.log('[verdict] 多场比赛：题目的加入 / 移出都写进 contests/<id>.json');
+  } finally {
+    fs.writeFileSync(file, original, 'utf8');
+    await api.dispatchPanel({ type: 'refresh' });
+  }
 }
 
 /**
@@ -460,6 +531,16 @@ async function checkContest(api) {
     assert.ok(!html.includes(forbidden), `榜单 HTML 不该引用外部资源：${forbidden}`);
   }
   assert.ok(html.includes('data-cell'), '单元格应当可点开详情');
+  // 成绩单里要能直接看到每道题的测试点：题目 > 子任务 > 测试点，路径与分值都写出来。
+  assert.ok(html.includes('题目与测试点'), '榜单 HTML 应当带题目与测试点清单');
+  assert.ok(
+    html.includes('逐测试点') || html.includes('verdict-details'),
+    '榜单 HTML 应当内嵌逐测试点详情',
+  );
+  assert.ok(
+    html.includes('<span class="mono">1.in</span>') || html.includes('>1.in<'),
+    '测试点清单里应当写清输入文件名',
+  );
 
   const target = path.join(os.tmpdir(), `verdict-standings-${String(Date.now())}.html`);
   const written = await api.writeStandingsHtml(target);

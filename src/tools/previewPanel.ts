@@ -31,6 +31,12 @@ const state: PanelState = {
       { id: 'bob', name: 'Bob', auto: true },
     ],
     problemIds: ['A', 'B'],
+    all: [
+      { id: 'internal-2026', title: '内部训练赛 #3', legacy: false, active: true },
+      { id: 'practice-01', title: '练习赛 #1', legacy: true, active: false },
+    ],
+    problemsDir: '/w/.verdict/problems',
+    dataDir: '/w/.verdict/data',
     error: null,
   },
   problems: [
@@ -39,6 +45,8 @@ const state: PanelState = {
       name: 'A. 求和',
       type: 'traditional',
       rootDir: '/w/.verdict/problems/A',
+      dataDir: '/w/.verdict/data/A',
+      inContest: true,
       testCount: 6,
       maxScore: 100,
       subtaskCount: 2,
@@ -49,6 +57,8 @@ const state: PanelState = {
       name: 'B. 区间最大子段和',
       type: 'traditional',
       rootDir: '/w/.verdict/problems/B',
+      dataDir: '/w/.verdict/data/B',
+      inContest: false,
       testCount: 10,
       maxScore: 100,
       subtaskCount: 3,
@@ -60,6 +70,7 @@ const state: PanelState = {
     name: 'A. 求和',
     type: 'traditional',
     rootDir: '/w/.verdict/problems/A',
+    dataDir: '/w/.verdict/data/A',
     limits: { timeMs: 1000, memoryMb: 256, stackMb: 256, outputKb: 4096 },
     comparator: { mode: 'default' },
     subtasks: [

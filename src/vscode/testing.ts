@@ -1,7 +1,6 @@
-import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { CaseResult, Subtask, SubtaskResult, TestCase } from '../core/model';
-import { loadProblem, PROBLEM_FILE, type ProblemPackage } from '../core/problem/package';
+import { dataFilePath, loadProblem, PROBLEM_FILE, type ProblemPackage } from '../core/problem/package';
 import type { JudgeOutcome } from '../engineFacade';
 import type { DebugResult } from './debug';
 import type { VerdictOutput } from './output';
@@ -117,7 +116,8 @@ export function registerTesting(deps: TestingDeps): TestingHandle {
     const item = controller.createTestItem(
       `test:${pkg.rootDir}:${test.id}`,
       `#${test.id}`,
-      vscode.Uri.file(path.join(pkg.rootDir, test.input)),
+      // 数据可能在总库里，不在题目包里面——路径一律走同一个解析函数。
+      vscode.Uri.file(dataFilePath(pkg, test.input)),
     );
     item.description = `${test.points ?? 1} 分`;
     item.range = new vscode.Range(0, 0, 0, 0);

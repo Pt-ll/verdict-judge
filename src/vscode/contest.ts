@@ -2,19 +2,23 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import {
-  PROBLEMS_DIR,
+  PLAYERS_DIR,
   VERDICT_DIR,
   contestPath,
-  findContestRoot,
+  listContests,
   loadContest,
+  newContestFile,
   problemDir,
   saveContest,
+  submissionsPath,
+  type ContestRef,
   type ContestPackage,
 } from '../core/contest/contest';
 import { loadSubmissions, mergeSubmissions, saveSubmissions } from '../core/contest/submissions';
 import { canRejudge, computeStandings, summaryStats } from '../core/contest/standings';
 import { PROBLEM_FILE, saveProblem } from '../core/problem/package';
 import { standingsToHtml, type ReportOptions } from '../core/report/html';
+import { DATA_DIR, dataRootOf, problemsDirOf, submissionsDirOf } from '../core/layout';
 import {
   type Contest,
   DEFAULT_LIMITS,
@@ -31,6 +35,7 @@ import { showStandingsView } from './standingsView';
 import { workspaceRoot } from './workspace';
 
 export const COMMAND_NEW_CONTEST = 'verdict.newContest';
+export const COMMAND_SWITCH_CONTEST = 'verdict.switchContest';
 export const COMMAND_NEW_PROBLEM = 'verdict.newProblem';
 export const COMMAND_JUDGE_ALL = 'verdict.judgeAll';
 export const COMMAND_REJUDGE = 'verdict.rejudge';
@@ -60,6 +65,9 @@ export interface RejudgeResult {
   submission?: Submission;
 }
 
+/** 记住「当前在用哪一场比赛」的 workspaceState 键。 */
+const ACTIVE_CONTEST_KEY = 'verdict.activeContest';
+
 /**
  * 一场比赛的操作入口。
  *
@@ -72,8 +80,39 @@ export class ContestSession {
   private submissions: Submission[] = [];
   private missing: { contestant: string; problem: string }[] = [];
   private loaded = false;
+  /**
+   * 当前在用的是哪一场比赛（工作区里可以同时存在好几场，SPEC §6.2）。
+   *
+   * 选中的那一场记在 workspaceState 里：编辑器重开之后还是同一场，
+   * 否则每次重启都会悄悄换成排序最靠前的那场，出题人会在错的地方改配置。
+   */
+  private active: string | null = null;
+  private restored = false;
 
   constructor(private readonly deps: ContestDeps) {}
+
+  /** 工作区里的全部比赛；没有工作区或一场都没有时是空数组。 */
+  async refs(): Promise<ContestRef[]> {
+    const root = workspaceRoot();
+    return root === undefined ? [] : listContests(root);
+  }
+
+  /** 当前比赛的 id；还没加载过时为 null。 */
+  activeId(): string | null {
+    return this.active;
+  }
+
+  /** 当前比赛的配置文件路径（面板上「打开比赛配置」用它）。 */
+  contestFile(): string | null {
+    return this.pkg?.file ?? null;
+  }
+
+  /** 切到另一场比赛。不存在的 id 会退回默认的那场（load 里兜底）。 */
+  async setActive(contestId: string): Promise<void> {
+    this.active = contestId;
+    this.loaded = false;
+    await this.load(true);
+  }
 
   async load(force = false): Promise<ContestPackage | null> {
     if (this.loaded && !force && this.pkg !== null) {
@@ -85,13 +124,21 @@ export class ContestSession {
     if (root === undefined) {
       return this.reset();
     }
-    const contestRoot = await findContestRoot(root, root);
-    if (contestRoot === null) {
+    const refs = await this.refs();
+    if (refs.length === 0) {
       return this.reset();
     }
 
-    this.pkg = await loadContest(contestRoot);
-    this.submissions = await loadSubmissions(this.pkg.verdictDir);
+    const wanted = this.active ?? this.restoredActive();
+    const ref = refs.find((item) => item.id === wanted) ?? refs[0];
+    if (ref === undefined) {
+      return this.reset();
+    }
+
+    this.pkg = await loadContest(root, ref.id);
+    this.active = ref.id;
+    await this.rememberActive(ref.id);
+    this.submissions = await loadSubmissions(this.pkg.submissionsFile);
     return this.pkg;
   }
 
@@ -100,6 +147,25 @@ export class ContestSession {
     this.submissions = [];
     this.missing = [];
     return null;
+  }
+
+  /** 上一次用过的比赛 id；存在 workspaceState 里，跟着工作区走。 */
+  private restoredActive(): string | null {
+    if (!this.restored) {
+      this.restored = true;
+      const stored = this.deps.context.workspaceState.get<string>(ACTIVE_CONTEST_KEY);
+      if (typeof stored === 'string' && stored.length > 0) {
+        this.active = stored;
+      }
+    }
+    return this.active;
+  }
+
+  private async rememberActive(contestId: string): Promise<void> {
+    if (this.deps.context.workspaceState.get<string>(ACTIVE_CONTEST_KEY) === contestId) {
+      return;
+    }
+    await this.deps.context.workspaceState.update(ACTIVE_CONTEST_KEY, contestId);
   }
 
   summary(cancelled = false): ContestSummary | null {
@@ -151,7 +217,7 @@ export class ContestSession {
         onSubmission: async (submission) => {
           done += 1;
           this.submissions = mergeSubmissions(this.submissions, [submission]);
-          await saveSubmissions(pkg.verdictDir, this.submissions);
+          await saveSubmissions(pkg.submissionsFile, this.submissions);
           const accepted = this.submissions.filter((item) => item.verdict === 'AC').length;
           status.setBusy(`评测 ${String(done)}/${String(total)} · AC ${String(accepted)}`);
         },
@@ -219,7 +285,7 @@ export class ContestSession {
       (stage) => this.deps.output.debug(stage),
     );
     this.submissions = mergeSubmissions(this.submissions, [updated]);
-    await saveSubmissions(pkg.verdictDir, this.submissions);
+    await saveSubmissions(pkg.submissionsFile, this.submissions);
     return {
       ok: true,
       message: `已重测：${contestant} 的 ${problem} 题（第 ${String(updated.rejudgeCount)} 次）。`,
@@ -310,6 +376,7 @@ export function registerContestCommands(deps: ContestDeps): ContestCommands {
     session,
     disposables: [
       vscode.commands.registerCommand(COMMAND_NEW_CONTEST, () => createContest(deps, session)),
+      vscode.commands.registerCommand(COMMAND_SWITCH_CONTEST, () => switchContest(session)),
       vscode.commands.registerCommand(COMMAND_NEW_PROBLEM, () => createProblem(deps, session)),
       vscode.commands.registerCommand(COMMAND_JUDGE_ALL, () =>
         withProgress('Verdict：评测全部', (token) => session.judgeAll(token)),
@@ -369,22 +436,60 @@ async function pickAndRejudge(deps: ContestDeps, session: ContestSession): Promi
   }
 }
 
+/** 切比赛：列出现有的几场让用户挑一个，选完面板与榜单都跟着换。 */
+async function switchContest(session: ContestSession): Promise<void> {
+  const refs = await session.refs();
+  if (refs.length === 0) {
+    void vscode.window.showWarningMessage(
+      'Verdict：这个工作区里还没有比赛。先执行「Verdict: 新建比赛」。',
+    );
+    return;
+  }
+  if (refs.length === 1) {
+    await session.setActive(refs[0]?.id ?? '');
+    void vscode.window.showInformationMessage(
+      `Verdict：工作区里只有一场比赛（${refs[0]?.id ?? ''}），已经切到它。`,
+    );
+    return;
+  }
+
+  const active = session.activeId();
+  const picked = await vscode.window.showQuickPick(
+    refs.map((ref) => ({
+      label: ref.id,
+      description: ref.id === active ? '（当前）' : ref.legacy ? 'contest.json（旧布局）' : '',
+      detail: ref.file,
+      id: ref.id,
+    })),
+    { title: 'Verdict：切换到哪一场比赛' },
+  );
+  if (picked === undefined) {
+    return;
+  }
+  await session.setActive(picked.id);
+  void vscode.window.showInformationMessage(`Verdict：已切换到比赛「${picked.id}」。`);
+}
+
 async function createContest(deps: ContestDeps, session: ContestSession): Promise<void> {
   const root = workspaceRoot();
   if (root === undefined) {
     void vscode.window.showWarningMessage('Verdict：请先打开一个文件夹作为工作区。');
     return;
   }
-  const existing = await findContestRoot(root, root);
-  if (existing !== null) {
-    void vscode.window.showWarningMessage(`Verdict：已经有了：${contestPath(existing)}`);
-    return;
-  }
 
-  const id = await askInput('比赛 id', path.basename(root), (value) =>
+  // 一个工作区可以同时放好几场比赛（SPEC §6.2），所以这里只要求 id 不与已有的撞上。
+  const existing = await session.refs();
+  const taken = new Set(existing.map((ref) => ref.id));
+  const id = await askInput('比赛 id（多场比赛各用各的 id）', path.basename(root), (value) =>
     isIdentifier(value) ? undefined : '只能用字母、数字、下划线或短横线',
   );
   if (id === undefined) {
+    return;
+  }
+  if (taken.has(id)) {
+    void vscode.window.showWarningMessage(
+      `Verdict：已经有一场叫 "${id}" 的比赛了：${contestPath(root, id)}。换一个 id，或用「Verdict: 切换比赛」。`,
+    );
     return;
   }
   const title = (await askInput('比赛标题', id)) ?? id;
@@ -413,18 +518,24 @@ async function createContest(deps: ContestDeps, session: ContestSession): Promis
     },
     rootDir: root,
     verdictDir: path.join(root, VERDICT_DIR),
+    file: newContestFile(root, id),
+    submissionsFile: submissionsPath(root, id),
     problemDirs: new Map(),
     // 新比赛还没有选手目录，自动发现要到第一次 loadContest 时才算得出来。
     autoContestants: [],
   });
-  await fs.promises.mkdir(path.join(root, VERDICT_DIR, PROBLEMS_DIR), { recursive: true });
+  // 三个目录一次备齐：题目配置、测试数据总库、评测记录。
+  for (const dir of [problemsDirOf(root), dataRootOf(root), submissionsDirOf(root)]) {
+    await fs.promises.mkdir(dir, { recursive: true });
+  }
 
-  deps.output.info(`已新建比赛：${contestPath(root)}`);
+  await session.setActive(id);
+
+  deps.output.info(`已新建比赛：${contestPath(root, id)}`);
   void vscode.window.showInformationMessage(
     `Verdict：已新建比赛「${title}」。接下来用「Verdict: 新建题目」加题，` +
-      `选手源码放在 ${path.join(root, 'players', '<选手>')} 下。`,
+      `选手源码放在 ${path.join(root, PLAYERS_DIR, '<选手>')} 下。`,
   );
-  void session;
 }
 
 async function createProblem(deps: ContestDeps, session: ContestSession): Promise<void> {
@@ -464,6 +575,9 @@ async function createProblem(deps: ContestDeps, session: ContestSession): Promis
   }
 
   const memoryMb = Number(memoryText);
+  // 测试数据统一放进总库（.verdict/data/<题目 id>），多场比赛共用同一道题的数据，
+  // 也不用在题目包目录里翻来翻去。
+  const dataDir = path.join(root, VERDICT_DIR, DATA_DIR, id);
   const problem: Problem = {
     id,
     name: name.trim().length > 0 ? name : id,
@@ -477,10 +591,10 @@ async function createProblem(deps: ContestDeps, session: ContestSession): Promis
   await saveProblem({
     problem,
     rootDir: dir,
-    dataDir: path.join(dir, 'data'),
+    dataDir,
     extraDir: path.join(dir, 'extra'),
   });
-  await fs.promises.mkdir(path.join(dir, 'data'), { recursive: true });
+  await fs.promises.mkdir(dataDir, { recursive: true });
 
   // 在比赛工作区里新建的题目，顺手加进题目列表：这是绝大多数情况下的意图，
   // 不想加也可以事后从 contest.json 里删掉。
@@ -493,7 +607,7 @@ async function createProblem(deps: ContestDeps, session: ContestSession): Promis
 
   deps.output.info(`已新建题目：${path.join(dir, PROBLEM_FILE)}`);
   void vscode.window.showInformationMessage(
-    `Verdict：已新建题目「${problem.name}」。把 1.in / 1.out 放进 ${path.join(dir, 'data')}，` +
+    `Verdict：已新建题目「${problem.name}」。把 1.in / 1.out 放进 ${dataDir}，` +
       '再执行「Verdict: 导入测试点」。',
   );
 }

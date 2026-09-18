@@ -55,7 +55,7 @@
 1. 打开 <https://marketplace.visualstudio.com/manage> **[你来]**
 2. **New extension** → 选 **Visual Studio Code**（下拉里如果只有 Azure DevOps /
    Visual Studio，说明账号的租户还没打通，见下面第 3 步）
-3. 把 `dist/verdict-judge-0.1.1.vsix` 拖进去，确认
+3. 把 `dist/verdict-judge-0.1.3.vsix` 拖进去，确认
 
 上传走的是网页表单，跟命令行那套 Azure DevOps 令牌无关。**本仓库的发布就卡在
 令牌生成上（见文末的 TF400898），所以这条路是首选。**
@@ -86,7 +86,7 @@ vsce login YuChenZhong        # 粘上一步的 PAT（若报 Publisher not found
 # 方式一：用本仓库自带的打包器产出 VSIX，再交给 vsce 上传
 # （我们的打包器零依赖、离线可用；vsce 只负责上传与市场校验）
 pnpm package
-vsce publish --packagePath dist/verdict-judge-0.1.1.vsix
+vsce publish --packagePath dist/verdict-judge-0.1.3.vsix
 
 # 方式二：完全交给 vsce 打包
 vsce publish
@@ -100,9 +100,9 @@ vsce publish
 市场不接受重复版本号，所以每次先升 `package.json` 里的 `version`：
 
 ```bash
-npm version patch             # 0.1.1 -> 0.1.2（或 minor / major）
+npm version patch             # 0.1.2 -> 0.1.3（或 minor / major）
 git push --follow-tags
-pnpm package && vsce publish --packagePath dist/verdict-judge-0.1.1.vsix
+pnpm package && vsce publish --packagePath dist/verdict-judge-0.1.3.vsix
 ```
 
 升完版本顺手在 `CHANGELOG.md` 顶部加一节：它会被打进 VSIX，市场页面据此多出一个
@@ -128,7 +128,7 @@ npx ovsx create-namespace YuChenZhong -p <你的 token>
 4. 发布：
 
 ```bash
-npx ovsx publish -p <你的 token> dist/verdict-judge-0.1.1.vsix
+npx ovsx publish -p <你的 token> dist/verdict-judge-0.1.3.vsix
 ```
 
    它会提示命名空间是 "unverified"（没打勾）：不影响发布与安装。那个认证徽章要求命名空间
@@ -211,12 +211,13 @@ Azure DevOps 服务端的内部错误，与你的操作、与扩展本身都无�
 
 - `pnpm package` 产出的 VSIX 已在本机用 `code --install-extension` 装过一次，确认官方安装器
   接受它的清单（装完已卸载）。
-- **当前版本 0.1.1**（打包修复；侧边栏评测面板是 0.1.0），标签 `v0.1.1`。两个包都备好了，
-  内容一致（各 9 个文件）：
-  - `dist/verdict-judge-0.1.1.vsix` —— 自带打包器产出，已按市场格式修好（见上一节），首选上传这个；
-  - `dist/verdict-judge-0.1.1-vsce.vsix` —— 官方 vsce 打的备用包，万一前者仍被拒就换它试。
+- **当前版本 0.1.3**（测试数据总库 / 一个工作区多场比赛 / 删除题目 / 成绩单测试点详情）。
+  版本线：0.1.0 侧边栏评测面板 → 0.1.1 修 VSIX 格式 → 0.1.2 修三处使用反馈 → 0.1.3。
+  待发版本的包由 `pnpm package` 产出（`dist/verdict-judge-<版本>.vsix`，自带打包器，
+  已按市场格式对齐，见上一节），首选上传这个。历史上还留过一个 `-vsce` 备用包，
+  格式修好之后不再需要它。
   包里带 `CHANGELOG.md`，市场页因此会有 Changelog 标签页。
-- **Open VSX：已发布 0.0.1**（命名空间 `YuChenZhong`，2026-09-13），0.1.1 待发。未认证
+- **Open VSX：已发布 0.0.1**（命名空间 `YuChenZhong`，2026-09-13），后续版本待发。未认证
   （要求命名空间与 GitHub 用户名一致），不影响安装。
   页面：<https://open-vsx.org/extension/YuChenZhong/verdict-judge>。
   注意：改名之前的 0.0.1 发在 `YuChenZhong.verdict`，那个页面会停在 0.0.1；新版本一律发到

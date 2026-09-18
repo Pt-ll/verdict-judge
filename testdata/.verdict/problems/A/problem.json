@@ -10,7 +10,7 @@
     { "id": "2", "name": "大数据", "points": 70, "tests": ["2"], "dependsOn": [], "scoring": "min" }
   ],
   "tests": [
-    { "id": "1", "input": "data/1.in", "answer": "data/1.out", "points": 30, "subtask": "1" },
-    { "id": "2", "input": "data/2.in", "answer": "data/2.out", "points": 70, "subtask": "2" }
+    { "id": "1", "input": "1.in", "answer": "1.out", "points": 30, "subtask": "1" },
+    { "id": "2", "input": "2.in", "answer": "2.out", "points": 70, "subtask": "2" }
   ]
 }

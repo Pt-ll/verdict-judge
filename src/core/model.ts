@@ -43,7 +43,8 @@ export interface TestCase {
   /**
    * 输入文件路径。
    *
-   * 题目包里相对**题目包根目录**（SPEC §6.3 写作 "data/1.in"）；
+   * 题目包里相对**数据目录**（SPEC §6.3，通常写作 "1.in"；0.1.2 及更早的
+   * "data/1.in" 加载时会被归一成同一个意思，见 problem/package.ts 的 normalizeTestPath）；
    * M1 的约定式查找（findTestsBesideSource）里则相对数据目录。
    */
   input: string;

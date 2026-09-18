@@ -86,9 +86,10 @@ describe('planAddTests', () => {
     const plan = await planAddTests(await loadProblem(dir));
 
     expect(plan.added.map((test) => test.id)).toEqual(['2', '3']);
-    expect(plan.added.map((test) => test.input)).toEqual(['data/2.in', 'data/3.in']);
+    // 路径相对数据目录（0.1.3 起）；旧写法 data/1.in 在加载时已经归一过，所以这里不会重复登记。
+    expect(plan.added.map((test) => test.input)).toEqual(['2.in', '3.in']);
     // .ans 也是合法答案后缀，登记时按实际文件名写进去。
-    expect(plan.added[1]?.answer).toBe('data/3.ans');
+    expect(plan.added[1]?.answer).toBe('3.ans');
     expect(plan.skipped).toEqual(['1']);
   });
 

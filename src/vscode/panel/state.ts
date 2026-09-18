@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { findContestRoot, loadContest } from '../../core/contest/contest';
+import { findContestRoot, listContests, loadContest, type ContestRef } from '../../core/contest/contest';
 import { scoreProblem } from '../../core/judge/score';
 import type {
   ComparatorConfig,
@@ -10,7 +10,8 @@ import type {
   SubtaskResult,
   Verdict,
 } from '../../core/model';
-import { loadProblem } from '../../core/problem/package';
+import { dataFilePath, loadProblem } from '../../core/problem/package';
+import { dataRootOf, problemsDirOf } from '../../core/layout';
 import type { CaseDocumentStore } from '../caseDocs';
 import { activeProblemRoot, discoverProblemRoots, workspaceRoot } from '../workspace';
 
@@ -48,6 +49,10 @@ export interface PanelProblemSummary {
   name: string;
   type: ProblemType;
   rootDir: string;
+  /** 这道题的测试数据在哪（总库或包内 data/）。 */
+  dataDir: string;
+  /** 是否在**当前**比赛的题目列表里；多场比赛可以同时用同一道题。 */
+  inContest: boolean;
   testCount: number;
   maxScore: number;
   subtaskCount: number;
@@ -60,6 +65,7 @@ export interface PanelProblemDetail {
   name: string;
   type: ProblemType;
   rootDir: string;
+  dataDir: string;
   limits: Limits;
   comparator: ComparatorConfig;
   subtasks: PanelSubtask[];
@@ -101,6 +107,11 @@ export interface PanelState {
     /** auto：从 players/ 自动发现（没写进 contest.json）。 */
     contestants: { id: string; name: string; auto: boolean }[];
     problemIds: string[];
+    /** 工作区里的全部比赛，供面板顶部切换；至少有一项。 */
+    all: { id: string; title: string; legacy: boolean; active: boolean }[];
+    /** 题目包与数据的存放位置，面板上直接告诉用户数据在哪。 */
+    problemsDir: string;
+    dataDir: string;
     /** 读 contest.json 失败的原因；有它时上面几项只是占位。 */
     error: string | null;
   } | null;
@@ -116,6 +127,8 @@ export interface PanelStateDeps {
   caseDocs: CaseDocumentStore;
   /** 比赛榜单；没有比赛时给 null。 */
   standings: () => PanelStandings | null;
+  /** 当前在用的是哪一场比赛。 */
+  activeContestId: () => string | null;
 }
 
 /** 展开区里最多放这么多字符：面板是给人扫一眼的，不是看全文的地方。 */
@@ -135,12 +148,13 @@ export async function collectPanelState(
   extras: { busy: string | null; notice: PanelState['notice'] },
 ): Promise<PanelState> {
   const root = workspaceRoot();
-  const contest = await loadContestSummary(root);
+  const refs = await listContestRefs(root);
+  const contest = await loadContestSummary(root, refs, deps.activeContestId());
   const roots = await discoverProblemRoots();
 
   const problems: PanelProblemSummary[] = [];
   for (const dir of roots) {
-    problems.push(await summarize(dir));
+    problems.push(await summarize(dir, contest?.problemIds ?? []));
   }
   // 比赛里列了、但题目包不在工作区里（比如还没创建）的题也要出现，
   // 否则面板上的题目列表和 contest.json 说的对不上。
@@ -151,6 +165,8 @@ export async function collectPanelState(
         name: id,
         type: 'traditional',
         rootDir: '',
+        dataDir: '',
+        inContest: true,
         testCount: 0,
         maxScore: 0,
         subtaskCount: 0,
@@ -178,7 +194,27 @@ export async function collectPanelState(
   };
 }
 
-async function loadContestSummary(root: string | undefined): Promise<PanelState['contest']> {
+/** 工作区里的全部比赛；列表本身出错（重名、读不出来）时返回空，具体错误由下面的加载报。 */
+async function listContestRefs(root: string | undefined): Promise<ContestRef[]> {
+  if (root === undefined) {
+    return [];
+  }
+  const contestRoot = await findContestRoot(root, root);
+  if (contestRoot === null) {
+    return [];
+  }
+  try {
+    return await listContests(contestRoot);
+  } catch {
+    return [];
+  }
+}
+
+async function loadContestSummary(
+  root: string | undefined,
+  refs: ContestRef[],
+  activeId: string | null,
+): Promise<PanelState['contest']> {
   if (root === undefined) {
     return null;
   }
@@ -186,8 +222,9 @@ async function loadContestSummary(root: string | undefined): Promise<PanelState[
   if (contestRoot === null) {
     return null;
   }
+  const active = refs.find((item) => item.id === activeId) ?? refs[0];
   try {
-    const pkg = await loadContest(contestRoot);
+    const pkg = await loadContest(contestRoot, active?.id);
     const auto = new Set(pkg.autoContestants);
     return {
       id: pkg.contest.id,
@@ -199,6 +236,16 @@ async function loadContestSummary(root: string | undefined): Promise<PanelState[
         auto: auto.has(item.id),
       })),
       problemIds: pkg.contest.problems.map((item) => item.id),
+      all: await Promise.all(
+        refs.map(async (ref) => ({
+          id: ref.id,
+          title: ref.id === pkg.contest.id ? pkg.contest.title : await titleOf(contestRoot, ref),
+          legacy: ref.legacy,
+          active: ref.id === pkg.contest.id,
+        })),
+      ),
+      problemsDir: problemsDirOf(contestRoot),
+      dataDir: dataRootOf(contestRoot),
       error: null,
     };
   } catch (err) {
@@ -206,16 +253,33 @@ async function loadContestSummary(root: string | undefined): Promise<PanelState[
     // 用户根本不知道是 contest.json 有问题——这正是「创建比赛后一直不显示」的现场。
     return {
       id: contestRoot,
-      title: 'contest.json 读不出来',
+      title: '比赛配置读不出来',
       maxRejudge: 0,
       contestants: [],
       problemIds: [],
+      all: refs.map((ref) => ({
+        id: ref.id,
+        title: ref.id,
+        legacy: ref.legacy,
+        active: ref.id === activeId,
+      })),
+      problemsDir: problemsDirOf(contestRoot),
+      dataDir: dataRootOf(contestRoot),
       error: firstLine(err),
     };
   }
 }
 
-async function summarize(dir: string): Promise<PanelProblemSummary> {
+/** 比赛下拉框里那一行显示的标题：读不出来就退回 id，别为了显示名字把面板整块弄挂。 */
+async function titleOf(contestRoot: string, ref: ContestRef): Promise<string> {
+  try {
+    return (await loadContest(contestRoot, ref.id)).contest.title;
+  } catch {
+    return ref.id;
+  }
+}
+
+async function summarize(dir: string, contestProblems: string[]): Promise<PanelProblemSummary> {
   try {
     const pkg = await loadProblem(dir);
     return {
@@ -223,6 +287,8 @@ async function summarize(dir: string): Promise<PanelProblemSummary> {
       name: pkg.problem.name,
       type: pkg.problem.type,
       rootDir: pkg.rootDir,
+      dataDir: pkg.dataDir,
+      inContest: contestProblems.includes(pkg.problem.id),
       testCount: pkg.problem.tests.length,
       maxScore: scoreProblem(pkg.problem, []).maxScore,
       subtaskCount: pkg.problem.subtasks.length,
@@ -234,6 +300,8 @@ async function summarize(dir: string): Promise<PanelProblemSummary> {
       name: path.basename(dir),
       type: 'traditional',
       rootDir: dir,
+      dataDir: '',
+      inContest: contestProblems.includes(path.basename(dir)),
       testCount: 0,
       maxScore: 0,
       subtaskCount: 0,
@@ -294,10 +362,11 @@ async function detail(
       memoryKb: result?.memoryKb ?? null,
       message: result?.message ?? '',
       firstDiffLine: result?.firstDiffLine ?? null,
-      inputText: await clipFile(path.join(pkg.rootDir, test.input)),
-      expectedText: result === undefined ? await clipFile(path.join(pkg.rootDir, test.answer)) : clip(result.answer),
+      inputText: await clipFile(dataFilePath(pkg, test.input)),
+      expectedText:
+        result === undefined ? await clipFile(dataFilePath(pkg, test.answer)) : clip(result.answer),
       outputText: result === undefined ? '' : clip(result.output),
-      hasData: await exists(path.join(pkg.rootDir, test.input)),
+      hasData: await exists(dataFilePath(pkg, test.input)),
     });
   }
 
@@ -307,6 +376,7 @@ async function detail(
     name: pkg.problem.name,
     type: pkg.problem.type,
     rootDir: pkg.rootDir,
+    dataDir: pkg.dataDir,
     limits: pkg.problem.limits,
     comparator: pkg.problem.comparator,
     subtasks: pkg.problem.subtasks.map((item) => ({
