@@ -1043,69 +1043,103 @@ exitCode != 0          -> RE
 ## 13. 目录结构
 
 ```text
-verdict/
-├── .vscode/                  # launch.json / tasks.json / settings.json
-├── .github/workflows/        # ci.yml（三平台矩阵）, release.yml
+verdict-judge/
+├── .vscode/                  # launch.json（运行扩展 / 以 testdata 为工作区）/ tasks.json / settings.json
+├── .github/workflows/        # ci.yml（三平台矩阵：typecheck / lint / 单测 / 集成测试）
 ├── .gitattributes
 ├── .editorconfig
 ├── .gitignore
-├── .nvmrc
-├── package.json              # 扩展清单 + 贡献点 + scripts
+├── .nvmrc                    # 24（CI 与开发用；扩展运行时仍是 VSCode 自带的 Node 20）
+├── .vscodeignore             # 改用 vsce 打包时的白名单（自己的打包器不读它）
+├── package.json              # 扩展清单 + 贡献点（命令 / 视图 / 设置）+ scripts
 ├── tsconfig.json
 ├── esbuild.js                # 打包扩展（dev dep，无运行时依赖）
+├── eslint.config.mjs         # 唯一的 lint 配置
+├── pnpm-workspace.yaml       # allowBuilds：放行 esbuild 的安装脚本
+├── scripts/package.js        # pnpm package 的入口：生产构建 + 打 VSIX
 ├── src/
-│   ├── extension.ts          # activate / deactivate
+│   ├── extension.ts          # activate / deactivate 与依赖装配
+│   ├── engineFacade.ts       # 串起 core，向 UI 暴露任务 API + 进度事件
 │   ├── core/                 # 平台无关内核（不 import vscode）
-│   │   ├── model.ts
+│   │   ├── model.ts          # 数据模型（Problem / Contest / Submission / 判定…）
 │   │   ├── layout.ts         # 工作区布局常量与拼路径（§6.1）
-│   │   ├── compiler.ts
+│   │   ├── compiler.ts       # 编译器探测、编译与缓存
+│   │   ├── zip.ts            # 手写 ZIP（只用内置 zlib；导入导出与 VSIX 共用）
 │   │   ├── sandbox/
 │   │   │   ├── sandbox.ts    # 接口与工厂
-│   │   │   ├── posix.ts
-│   │   │   └── windows.ts
+│   │   │   ├── posix.ts      # POSIX：进程组 + ulimit
+│   │   │   └── windows.ts    # Windows：Job Object + taskkill
 │   │   ├── compare/
-│   │   │   ├── compare.ts
-│   │   │   ├── default.ts
-│   │   │   ├── real.ts
-│   │   │   ├── spj.ts
-│   │   │   └── interactive.ts
-│   │   ├── types/            # traditional / interactive
+│   │   │   ├── compare.ts    # 模式分派与 UKE 兜底
+│   │   │   ├── prepare.ts    # checker / interactor 的编译准备
+│   │   │   ├── default.ts    # 忽略行尾空白
+│   │   │   ├── real.ts       # 实数（绝对 + 相对误差）
+│   │   │   ├── spj.ts        # testlib checker（含退出码 7 部分分）
+│   │   │   └── interactive.ts# testlib interactor
 │   │   ├── judge/
-│   │   │   ├── judge.ts
-│   │   │   └── score.ts
+│   │   │   ├── judge.ts      # 单点判定
+│   │   │   └── score.ts      # 子任务计分
 │   │   ├── problem/
-│   │   │   ├── package.ts
-│   │   │   ├── scan.ts
-│   │   │   └── zip.ts
+│   │   │   ├── package.ts    # problem.json 读写、数据目录解析、测试点路径
+│   │   │   ├── scan.ts       # 扫描数据目录与「源文件旁边」的约定式数据
+│   │   │   ├── edit.ts       # 加测试点 / 子任务编辑（纯函数，可单测）
+│   │   │   ├── subtasks.ts   # 子任务依赖拓扑排序
+│   │   │   ├── archive.ts    # 题目包 ZIP 导入导出
+│   │   │   └── testlib.ts    # testlib.h 查找
 │   │   ├── contest/
-│   │   │   ├── contest.ts
-│   │   │   ├── standings.ts
-│   │   │   └── rejudge.ts
+│   │   │   ├── contest.ts    # contests/*.json 读写（含旧 contest.json 兼容）
+│   │   │   ├── sources.ts    # 选手源码查找
+│   │   │   ├── plan.ts       # 选手 × 题目任务规划
+│   │   │   ├── submissions.ts# 评测记录读写与合并
+│   │   │   └── standings.ts  # 榜单、最优提交、重测上限
 │   │   ├── report/
-│   │   │   ├── html.ts
-│   │   │   └── markdown.ts
-│   │   └── rng.ts
+│   │   │   ├── html.ts       # 自包含成绩单（含题目与测试点清单）
+│   │   │   ├── markdown.ts   # Markdown 报告（暂无命令入口）
+│   │   │   └── json.ts       # JSON 报告（暂无命令入口）
+│   │   └── debug/launch.ts   # 生成各调试器的 launch 配置
 │   ├── vscode/               # 仅此目录依赖 vscode API
-│   │   ├── commands.ts
+│   │   ├── commands.ts       # 评测 / 取消 / 检查环境
+│   │   ├── problemCommands.ts# 题目包相关命令、改题与删题
+│   │   ├── contest.ts        # ContestSession：多场比赛、评测全部、重测、导出
 │   │   ├── controlPanel.ts   # 活动栏侧边栏面板的 provider 与消息路由（§4.12）
-│   │   ├── codelens.ts
-│   │   ├── diagnostics.ts
-│   │   ├── testing.ts
-│   │   ├── tree.ts
+│   │   ├── caseDocs.ts       # verdict:// 虚拟文档 + 原生 diff
+│   │   ├── codelens.ts       # ▶ 评测 / 🐞 调试首测点 / ⚙ 限制
+│   │   ├── diagnostics.ts    # 编译错误进问题面板
+│   │   ├── testing.ts        # Testing 面板：题目 > 子任务 > 测试点
+│   │   ├── standingsView.ts  # 完整榜单 WebView
 │   │   ├── statusBar.ts
-│   │   ├── virtualDocs.ts
-│   │   ├── debug.ts
-│   │   ├── config.ts
-│   │   ├── panel/            # 面板的纯 UI 层：html.ts(模板) / state.ts(收状态)
-│   │   └── webview/
-│   ├── engineFacade.ts       # 串起 core，向 UI 暴露任务 API + 进度事件
-│   ├── tools/                # 构建期工具（打包 VSIX、面板预览），不进扩展本体
-│   └── util/
-├── test/                     # 单元测试 + 集成测试
-├── testdata/                 # 样例比赛/题目/程序 + 期望结果
-├── media/                    # 图标、webview 静态资源
+│   │   ├── output.ts
+│   │   ├── config.ts         # 把 VSCode 设置读成内核参数
+│   │   ├── workspace.ts      # 题目包发现与工作区根
+│   │   ├── debug.ts          # 起调试会话（stdin 注入 / 交互题录制-重放）
+│   │   └── panel/            # 面板的纯 UI 层
+│   │       ├── html.ts       # 模板 + CSS + 脚本（CSP nonce，无网络）
+│   │       └── state.ts      # 采集面板状态
+│   ├── tools/                # 构建期工具，不进扩展本体
+│   │   ├── vsix.ts           # 自写 VSIX 打包器（零依赖）
+│   │   └── previewPanel.ts   # 把面板渲染成普通网页，调样式用
+│   └── util/                 # 两端共用的纯函数
+│       ├── files.ts
+│       ├── json.ts           # 配置读取 + 一次列出全部问题
+│       ├── paths.ts
+│       ├── process.ts
+│       └── which.ts
+├── test/                     # 单测（纯 Node）+ 集成测试
+│   ├── runTest.js            # 集成测试入口：先打包，再拉起真实扩展宿主
+│   └── integration/index.js  # 在宿主里断言命令、判定、面板、比赛与成绩单
+├── testdata/                 # 样例工作区（集成测试与 F5 都用它）
+│   ├── itest/                # M1 约定式查找的样例程序（AC/WA/TLE/RE/OLE/CE）
+│   ├── .verdict/             # 一场演示赛：contests/demo.json + data/<题目> + problems/<题目>
+│   └── players/              # 选手源码（alice 全对；bob 的 A 题故意溢出，拿 30 分）
+├── docs/wiki/                # GitHub wiki 页面的源件
+├── media/                    # 活动栏图标与扩展图标
+├── assets/                   # 图标源图
 ├── SPEC.md
-└── AGENTS.md
+├── AGENTS.md
+├── README.md
+├── CHANGELOG.md
+├── PUBLISHING.md             # 发布到两个市场的步骤
+└── LICENSE
 ```
 
 ---

@@ -35,6 +35,9 @@ function makeExtensionRoot(): string {
       repository: { url: 'https://github.com/example/verdict.git' },
       bugs: { url: 'https://github.com/example/verdict/issues' },
       galleryBanner: { color: '#1f3e8c', theme: 'dark' },
+      // 开发期字段：它们不该出现在包内的 package.json 里（见下面那条断言）。
+      devDependencies: { typescript: '^5.0.0' },
+      scripts: { 'vscode:prepublish': 'node esbuild.js --production' },
     }),
   );
   write('dist/extension.js', '// 打包产物\n');
@@ -112,6 +115,24 @@ describe('packageVsix', () => {
     expect(names.some((name) => name.endsWith('.vsix'))).toBe(false);
     expect(names.some((name) => name.includes('.DS_Store'))).toBe(false);
     expect(names.some((name) => name.startsWith('extension/src/'))).toBe(false);
+  });
+
+  it('包内的 package.json 去掉开发期字段（与 vsce 的产物对齐）', async () => {
+    const root = makeExtensionRoot();
+
+    const result = await packageVsix({ root });
+    const packed = extractZip(fs.readFileSync(result.outFile))
+      .find((entry) => entry.name === 'extension/package.json')
+      ?.data.toString('utf8');
+    const manifest = JSON.parse(packed ?? '{}') as Record<string, unknown>;
+
+    // 用户不需要我们的 devDependencies，更不该拿到一个「会在别处被误执行」的 prepublish 脚本。
+    expect(manifest.devDependencies).toBeUndefined();
+    expect(manifest.scripts).toBeUndefined();
+    // 扩展真正跑起来要用的字段一个都不能少。
+    expect(manifest.name).toBe('verdict');
+    expect(manifest.main).toBe('./dist/extension.js');
+    expect(manifest.engines).toEqual({ vscode: '^1.95.0' });
   });
 
   it('清单里的标识与引擎要求来自 package.json', async () => {

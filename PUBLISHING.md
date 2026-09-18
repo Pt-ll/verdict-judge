@@ -25,6 +25,47 @@
 
 ## 路线 A：VS Code Marketplace（官方市场）
 
+### 0. 发布前的自检（本地，约 5 分钟）
+
+三步走完，能挡掉绝大多数「上传后才发现」的问题：
+
+```bash
+# 1) 质量门：类型、风格、单测
+pnpm typecheck && pnpm lint && pnpm test
+
+# 2) 出包（自带打包器，零依赖、可离线）
+pnpm package                      # -> dist/verdict-judge-0.1.3.vsix
+
+# 3) 用官方安装器验格式：装进一个隔离的扩展目录，不碰你现有的安装
+CODE='/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code'   # Linux/CI 上就是 code
+"$CODE" --extensions-dir /private/tmp/verdict-ext-check --install-extension dist/verdict-judge-0.1.3.vsix
+"$CODE" --extensions-dir /private/tmp/verdict-ext-check --list-extensions --show-versions
+# 期望输出：yuchenzhong.verdict-judge@0.1.3
+```
+
+包内**只有 9 个文件**，且都是市场认识的样子：
+
+```bash
+unzip -l dist/verdict-judge-0.1.3.vsix
+#   extension.vsixmanifest                  # 市场与安装器读的清单
+#   [Content_Types].xml                     # TF400898 就是这一份写错导致的（见文末）
+#   extension/package.json                  # devDependencies / scripts 已被剥掉，与 vsce 产物一致
+#   extension/dist/extension.js             # 唯一要被加载的代码（无 sourcemap）
+#   extension/media/icon.png                # 128×128 RGBA，市场页图标
+#   extension/media/activity.svg
+#   extension/readme.md                     # 市场页面正文
+#   extension/changelog.md                  # Changelog 标签页
+#   extension/LICENSE.txt                   # 页面上的 License: MIT
+```
+
+清单里这几行是市场真正会读的（`test/vsix.test.ts` 有断言盯着，改坏了单测会红）：
+`<Identity Id/Version/Publisher>`、`<Icon>`、`<License>`、
+`Content.Details`（正文）、`Content.Changelog`、`Icons.Default`、
+仓库 / 支持链接、Branding（横幅配色）、Pricing。
+
+发版前还要顺手确认：`package.json` 的 `version` 已经升过（市场不接受重复版本号）、
+`CHANGELOG.md` 顶部有对应那一节、三平台 CI 是绿的。
+
 ### 1. 创建 publisher **[你来]**
 
 1. 用 Microsoft 账号登录 <https://marketplace.visualstudio.com/manage>
@@ -108,6 +149,19 @@ pnpm package && vsce publish --packagePath dist/verdict-judge-0.1.3.vsix
 升完版本顺手在 `CHANGELOG.md` 顶部加一节：它会被打进 VSIX，市场页面据此多出一个
 「Changelog」标签页（README 里也有指向它的链接）。
 
+### 7. 发布后验证
+
+```bash
+# 页面：应当显示 0.1.3 的 README 正文、Changelog 标签页、License: MIT、图标
+open 'https://marketplace.visualstudio.com/items?itemName=YuChenZhong.verdict-judge'
+
+# 客户端：装最新版（会覆盖本机的旧版本）
+code --install-extension YuChenZhong.verdict-judge
+code --list-extensions --show-versions | grep -i verdict
+```
+
+市场有缓存，刚发完可能几分钟内还是旧版；`code --install-extension` 装到旧版就等一会儿再试。
+
 ## 路线 B：Open VSX（VSCodium / Gitpod / Theia 用的是它）
 
 如果你的用户里有不用官方 VS Code 的人，值得再发一份：
@@ -131,9 +185,38 @@ npx ovsx create-namespace YuChenZhong -p <你的 token>
 npx ovsx publish -p <你的 token> dist/verdict-judge-0.1.3.vsix
 ```
 
-   它会提示命名空间是 "unverified"（没打勾）：不影响发布与安装。那个认证徽章要求命名空间
+  它会提示命名空间是 "unverified"（没打勾）：不影响发布与安装。那个认证徽章要求命名空间
    与你的 GitHub 用户名一致；想拿到就把命名空间与 `package.json` 的 `publisher` 一起换成
    你的 GitHub 用户名。
+
+   常用参数：`--no-dependencies`（不校验 `extensionDependencies`，我们本来也没有）、
+   `--packagePath` 与位置参数等价。发布前可以先干跑一次：
+
+   ```bash
+   npx ovsx verify-pat YuChenZhong -p <你的 token>     # 令牌能不能用
+   npx ovsx ls YuChenZhong -p <你的 token>              # 命名空间下已发布的版本
+   ```
+
+5. 发布后验证：
+
+   ```bash
+   open 'https://open-vsx.org/extension/YuChenZhong/verdict-judge'
+   ```
+
+   VSCodium / Gitpod / Theia 里搜 `Verdict` 应当能装到 0.1.3。
+
+### 两个市场怎么选
+
+| | 官方市场（路线 A） | Open VSX（路线 B） |
+| --- | --- | --- |
+| 谁在用 | VS Code 本体 | VSCodium / Gitpod / Theia / code-server |
+| 需要的凭据 | 微软账号 +（命令行发布时）Azure DevOps PAT | GitHub 账号 + Open VSX token |
+| 首次多一步 | 创建 publisher | 必须先 `create-namespace` |
+| 上传的包 | **同一个 VSIX** | **同一个 VSIX** |
+| 本项目状态 | publisher 已建，尚未发布成功（PAT 卡在 TF400898） | 已发布 0.0.1（旧 ID），新版本待发 |
+
+两边用同一个 VSIX，所以流程是：**先在本地出包并自检 → 传 Open VSX（几步就能通）→
+再用网页上传官方市场**。哪边先通都不影响另一边。
 
 ## 常见被拒原因
 
@@ -144,6 +227,8 @@ npx ovsx publish -p <你的 token> dist/verdict-judge-0.1.3.vsix
 | 版本冲突 | 同一个版本号发了第二次，先 `npm version patch` |
 | 图标不显示 | 不是 128×128 的 PNG，或 `package.json` 里忘了写 `icon` 字段 |
 | 打包后体积异常 | 把 `node_modules/` 之类打进去了；本仓库的打包器按白名单来，不会有这个问题 |
+| `Namespace not found`（ovsx） | 还没建命名空间，或名字与 `package.json` 的 `publisher` 不一致 |
+| `Invalid publisher name` | `publisher` 里带了空格或大写（本仓库已按 `YuChenZhong` 与 `verdict-judge` 定好） |
 
 ## 我们的 VSIX 为什么会被市场打回（TF400898）
 
@@ -209,14 +294,17 @@ Azure DevOps 服务端的内部错误，与你的操作、与扩展本身都无�
 
 ## 这个仓库当前的状态
 
-- `pnpm package` 产出的 VSIX 已在本机用 `code --install-extension` 装过一次，确认官方安装器
-  接受它的清单（装完已卸载）。
+- `pnpm package` 产出的 VSIX 已在本机用**官方安装器**验过两次（0.1.1 与 0.1.3），
+  装进隔离的 `--extensions-dir` 里确认能装上、版本号对得上，没有动你日常用的那份安装
+  （本机现存的是 `yuchenzhong.verdict-judge@0.1.2`）。
 - **当前版本 0.1.3**（测试数据总库 / 一个工作区多场比赛 / 删除题目 / 成绩单测试点详情）。
   版本线：0.1.0 侧边栏评测面板 → 0.1.1 修 VSIX 格式 → 0.1.2 修三处使用反馈 → 0.1.3。
   待发版本的包由 `pnpm package` 产出（`dist/verdict-judge-<版本>.vsix`，自带打包器，
   已按市场格式对齐，见上一节），首选上传这个。历史上还留过一个 `-vsce` 备用包，
   格式修好之后不再需要它。
   包里带 `CHANGELOG.md`，市场页因此会有 Changelog 标签页。
+  0.1.3 这一版额外做了一件事：包内的 `package.json` 剥掉 `devDependencies` 与 `scripts`
+  （与 vsce 的产物对齐），包从 9 个文件 / 98.3KB 缩到 98.0KB。
 - **Open VSX：已发布 0.0.1**（命名空间 `YuChenZhong`，2026-09-13），后续版本待发。未认证
   （要求命名空间与 GitHub 用户名一致），不影响安装。
   页面：<https://open-vsx.org/extension/YuChenZhong/verdict-judge>。

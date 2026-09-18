@@ -89,7 +89,13 @@ export async function packageVsix(options: VsixOptions): Promise<VsixResult> {
   for (const item of INCLUDED) {
     collected.push(...(await collect(root, item, 'extension')));
   }
-  const files = collected.map((entry) => ({ ...entry, name: renameInPackage(entry.name) }));
+  const files = collected
+    .map((entry) => ({ ...entry, name: renameInPackage(entry.name) }))
+    .map((entry) =>
+      entry.name === 'extension/package.json'
+        ? { ...entry, data: Buffer.from(`${JSON.stringify(prunePackagedManifest(manifest), null, 2)}\n`, 'utf8') }
+        : entry,
+    );
   const assets = assetsOf(manifest, files.map((entry) => entry.name));
 
   const entries: ZipEntry[] = [
@@ -155,6 +161,20 @@ async function collect(root: string, relative: string, prefix: string): Promise<
     entries.push(...(await collect(root, `${relative}/${item.name}`, prefix)));
   }
   return entries;
+}
+
+/**
+ * 包内的 package.json 要去掉开发期字段。
+ *
+ * 官方 vsce 也是这么做的：`devDependencies` 与 `scripts` 对使用者毫无意义，
+ * 其中 `vscode:prepublish` 更是只在打包时该跑 —— 留一份在用户机器上，等于把一个
+ * 会在别处被误执行的脚本一起发出去。市场后端不校验这些字段，但包该是干净的。
+ */
+function prunePackagedManifest(manifest: ManifestJson): Record<string, unknown> {
+  const pruned: Record<string, unknown> = { ...manifest };
+  delete pruned.devDependencies;
+  delete pruned.scripts;
+  return pruned;
 }
 
 /**
