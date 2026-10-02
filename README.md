@@ -4,7 +4,7 @@
 
 **完全离线 · 零运行时依赖 · Windows / macOS / Linux 一致。**
 
-更新日志见 [CHANGELOG.md](CHANGELOG.md)（0.1.5 粘贴样例 + 删数据；0.1.4 去掉 Testing 面板 +
+更新日志见 [CHANGELOG.md](CHANGELOG.md)（0.1.6 修成绩单点击；0.1.5 粘贴样例 + 删数据；0.1.4 去掉 Testing 面板 +
 每场比赛挑选手 + 成绩单点击跳转）。
 
 完整的使用说明（安装、面板、出题流程、比赛与榜单、命令与设置、常见问题）见
@@ -62,7 +62,7 @@
 
 ```bash
 pnpm package                                                     # 生成 dist/verdict-judge-<版本>.vsix
-code --install-extension dist/verdict-judge-0.1.5.vsix           # 安装（文件名里的版本号跟着 package.json 走）
+code --install-extension dist/verdict-judge-0.1.6.vsix           # 安装（文件名里的版本号跟着 package.json 走）
 ```
 
 > macOS 上如果提示 `command not found: code`：VS Code 里按 `Cmd+Shift+P`，执行

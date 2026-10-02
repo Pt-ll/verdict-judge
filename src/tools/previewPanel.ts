@@ -5,10 +5,15 @@
  * （F5 或 pnpm test:integration）太慢了。这个工具把同一份 panelHtml() 配上假数据
  * 写成一个自包含的 HTML，双击就能看——看不到的只有真实数据与消息往返。
  *
+ * 面板的颜色全靠 `--vscode-*` 变量，浏览器里没有这些变量时会退化成一堆 fallback，
+ * 看着完全不像 VS Code。所以这里铺一层主题变量（默认深色，加 `--light` 换浅色），
+ * 让预览跟真实观感接近——这也是给面板截图（博客/文档）用的那套。
+ *
  * 用法（输出刻意放在临时目录，免得混进 dist/ 被打进 VSIX）：
  *   npx esbuild src/tools/previewPanel.ts --bundle --platform=node --format=cjs \
  *     --outfile=/tmp/verdict-preview.cjs
- *   node /tmp/verdict-preview.cjs /tmp/verdict-panel.html
+ *   node /tmp/verdict-preview.cjs /tmp/verdict-panel.html          # 深色
+ *   node /tmp/verdict-preview.cjs /tmp/verdict-panel.html --light  # 浅色
  *
  * 它属于 src/tools/**（构建期工具），esbuild 只从 extension.ts 出发打包，
  * 所以这个文件不会进扩展本体。
@@ -161,7 +166,79 @@ function sampleTests(): PanelTest[] {
   }));
 }
 
+/** VS Code 默认深色 / 浅色主题里，面板用得到的那些变量。 */
+const DARK_THEME = `
+:root {
+  --vscode-font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  --vscode-foreground: #cccccc;
+  --vscode-descriptionForeground: #9d9d9d;
+  --vscode-sideBar-background: #252526;
+  --vscode-editor-background: #1e1e1e;
+  --vscode-panel-border: #3c3c3c;
+  --vscode-button-background: #0e639c;
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-secondaryBackground: #3a3d41;
+  --vscode-button-secondaryForeground: #cccccc;
+  --vscode-input-background: #3c3c3c;
+  --vscode-input-foreground: #cccccc;
+  --vscode-input-border: #3c3c3c;
+  --vscode-list-hoverBackground: #2a2d2e;
+  --vscode-list-activeSelectionBackground: #04395e;
+  --vscode-list-activeSelectionForeground: #ffffff;
+  --vscode-editorWidget-background: #252526;
+  --vscode-textCodeBlock-background: #2d2d2d;
+  --vscode-charts-green: #89d185;
+  --vscode-charts-red: #f14c4c;
+  --vscode-charts-orange: #d18616;
+  --vscode-charts-blue: #3794ff;
+  --vscode-charts-purple: #b180d7;
+  --vscode-errorForeground: #f48771;
+  --vscode-editorWarning-foreground: #cca700;
+  --vscode-focusBorder: #007fd4;
+  --vscode-toolbar-hoverBackground: rgba(90, 93, 94, 0.31);
+  color-scheme: dark;
+}
+`;
+
+const LIGHT_THEME = `
+:root {
+  --vscode-font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  --vscode-foreground: #3b3b3b;
+  --vscode-descriptionForeground: #717171;
+  --vscode-sideBar-background: #f3f3f3;
+  --vscode-editor-background: #ffffff;
+  --vscode-panel-border: #e5e5e5;
+  --vscode-button-background: #007acc;
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-secondaryBackground: #e5e5e5;
+  --vscode-button-secondaryForeground: #3b3b3b;
+  --vscode-input-background: #ffffff;
+  --vscode-input-foreground: #3b3b3b;
+  --vscode-input-border: #cecece;
+  --vscode-list-hoverBackground: #e8e8e8;
+  --vscode-list-activeSelectionBackground: #0060c0;
+  --vscode-list-activeSelectionForeground: #ffffff;
+  --vscode-editorWidget-background: #f3f3f3;
+  --vscode-textCodeBlock-background: #f3f3f3;
+  --vscode-charts-green: #388a34;
+  --vscode-charts-red: #e51400;
+  --vscode-charts-orange: #bf8803;
+  --vscode-charts-blue: #0060c0;
+  --vscode-charts-purple: #652d90;
+  --vscode-errorForeground: #a1260d;
+  --vscode-editorWarning-foreground: #bf8803;
+  --vscode-focusBorder: #0090f1;
+  --vscode-toolbar-hoverBackground: rgba(184, 184, 184, 0.31);
+  color-scheme: light;
+}
+`;
+
+const light = process.argv.includes('--light');
 const html = panelHtml(NONCE).replace(
+  '</head>',
+  // 面板的 CSP 是 `style-src 'nonce-…'`，不带 nonce 的 <style> 会被浏览器直接丢掉。
+  `<style nonce="${NONCE}">${light ? LIGHT_THEME : DARK_THEME}</style></head>`,
+).replace(
   '<body>',
   [
     '<body>',

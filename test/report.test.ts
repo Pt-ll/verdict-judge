@@ -123,7 +123,8 @@ describe('standingsToHtml', () => {
     );
 
     expect(embedded).not.toBeNull();
-    expect(output).toMatch(/<td[^>]*data-cell="alice/);
+    // 属性值是详情数组的下标（纯数字），不是「选手 id × 题目 id」。
+    expect(output).toMatch(/<td[^>]*data-cell="\d+"/);
     const parsed = JSON.parse((embedded?.[1] ?? '').replace(/\\u003c/g, '<')) as {
       contestant: string;
       problem: string;
@@ -174,25 +175,21 @@ describe('standingsToHtml', () => {
     expect(parsed[0]?.cases[0]).toMatchObject({ test: '1', score: 100, points: 100 });
   });
 
-  it('每个可点的单元格都能在详情里查到：键与 data-cell 逐字一致', () => {
+  it('data-cell 是纯数字下标：不受 HTML 转义影响（只有真浏览器才会暴露这类问题）', () => {
     const output = html();
     const embedded = /<script type="application\/json" id="verdict-details">(.*?)<\/script>/s.exec(
       output,
     );
-    const parsed = JSON.parse((embedded?.[1] ?? '').replace(/\\u003c/g, '<')) as {
-      key: string;
-      contestant: string;
-    }[];
-    const keys = new Set(parsed.map((item) => item.key));
-
-    // 显示名与 id 不同（alice → Alice）时必须仍然点得开——这正是
-    // 「成绩单里看不到测试点详情」那个 bug 的现场。
+    const parsed = JSON.parse((embedded?.[1] ?? '').replace(/\\u003c/g, '<')) as unknown[];
     const cells = [...output.matchAll(/data-cell="([^"]*)"/g)].map((match) => match[1] ?? '');
+
     expect(cells.length).toBeGreaterThan(0);
     for (const cell of cells) {
-      expect(keys.has(cell)).toBe(true);
+      // 只允许 ASCII 数字：以前这里写的是「选手 id + NUL + 题目 id」，
+      // HTML 解析器会把属性里的 NUL 换成 U+FFFD，浏览器里点格子就查不到详情。
+      expect(cell).toMatch(/^\d+$/);
+      expect(parsed[Number(cell)]).toBeDefined();
     }
-    expect(parsed.find((item) => item.contestant === 'Alice')?.key).toBe('alice\u0000A');
   });
 
   it('成绩单里的脚本点得开：每个格子都真的画出详情', () => {
@@ -316,7 +313,9 @@ function runReportScript(html: string): {
 
   const cells = new Map<string, unknown>();
   for (const match of html.matchAll(/data-cell="([^"]*)"/g)) {
-    const value = match[1] ?? '';
+    // 浏览器解析 HTML 时会把属性值里的 NUL 换成 U+FFFD——桩也照做，
+    // 否则「属性里塞了 NUL」这种只有真浏览器才炸的问题在这里测不出来。
+    const value = (match[1] ?? '').replace(/\u0000/g, '\uFFFD');
     const cell = {
       closest: () => cell,
       getAttribute: (name: string) => (name === 'data-cell' ? value : null),

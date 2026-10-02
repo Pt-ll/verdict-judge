@@ -34,19 +34,19 @@
 pnpm typecheck && pnpm lint && pnpm test
 
 # 2) 出包（自带打包器，零依赖、可离线）
-pnpm package                      # -> dist/verdict-judge-0.1.5.vsix
+pnpm package                      # -> dist/verdict-judge-0.1.6.vsix
 
 # 3) 用官方安装器验格式：装进一个隔离的扩展目录，不碰你现有的安装
 CODE='/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code'   # Linux/CI 上就是 code
-"$CODE" --extensions-dir /private/tmp/verdict-ext-check --install-extension dist/verdict-judge-0.1.5.vsix
+"$CODE" --extensions-dir /private/tmp/verdict-ext-check --install-extension dist/verdict-judge-0.1.6.vsix
 "$CODE" --extensions-dir /private/tmp/verdict-ext-check --list-extensions --show-versions
-# 期望输出：yuchenzhong.verdict-judge@0.1.5
+# 期望输出：yuchenzhong.verdict-judge@0.1.6
 ```
 
 包内**只有 9 个文件**，且都是市场认识的样子：
 
 ```bash
-unzip -l dist/verdict-judge-0.1.5.vsix
+unzip -l dist/verdict-judge-0.1.6.vsix
 #   extension.vsixmanifest                  # 市场与安装器读的清单
 #   [Content_Types].xml                     # TF400898 就是这一份写错导致的（见文末）
 #   extension/package.json                  # devDependencies / scripts 已被剥掉，与 vsce 产物一致
@@ -96,7 +96,7 @@ unzip -l dist/verdict-judge-0.1.5.vsix
 1. 打开 <https://marketplace.visualstudio.com/manage> **[你来]**
 2. **New extension** → 选 **Visual Studio Code**（下拉里如果只有 Azure DevOps /
    Visual Studio，说明账号的租户还没打通，见下面第 3 步）
-3. 把 `dist/verdict-judge-0.1.5.vsix` 拖进去，确认
+3. 把 `dist/verdict-judge-0.1.6.vsix` 拖进去，确认
 
 上传走的是网页表单，跟命令行那套 Azure DevOps 令牌无关。**本仓库的发布就卡在
 令牌生成上（见文末的 TF400898），所以这条路是首选。**
@@ -127,7 +127,7 @@ vsce login YuChenZhong        # 粘上一步的 PAT（若报 Publisher not found
 # 方式一：用本仓库自带的打包器产出 VSIX，再交给 vsce 上传
 # （我们的打包器零依赖、离线可用；vsce 只负责上传与市场校验）
 pnpm package
-vsce publish --packagePath dist/verdict-judge-0.1.5.vsix
+vsce publish --packagePath dist/verdict-judge-0.1.6.vsix
 
 # 方式二：完全交给 vsce 打包
 vsce publish
@@ -141,9 +141,9 @@ vsce publish
 市场不接受重复版本号，所以每次先升 `package.json` 里的 `version`：
 
 ```bash
-npm version patch             # 0.1.4 -> 0.1.5（或 minor / major）
+npm version patch             # 0.1.5 -> 0.1.6（或 minor / major）
 git push --follow-tags
-pnpm package && vsce publish --packagePath dist/verdict-judge-0.1.5.vsix
+pnpm package && vsce publish --packagePath dist/verdict-judge-0.1.6.vsix
 ```
 
 升完版本顺手在 `CHANGELOG.md` 顶部加一节：它会被打进 VSIX，市场页面据此多出一个
@@ -152,7 +152,7 @@ pnpm package && vsce publish --packagePath dist/verdict-judge-0.1.5.vsix
 ### 7. 发布后验证
 
 ```bash
-# 页面：应当显示 0.1.5 的 README 正文、Changelog 标签页、License: MIT、图标
+# 页面：应当显示 0.1.6 的 README 正文、Changelog 标签页、License: MIT、图标
 open 'https://marketplace.visualstudio.com/items?itemName=YuChenZhong.verdict-judge'
 
 # 客户端：装最新版（会覆盖本机的旧版本）
@@ -182,7 +182,7 @@ npx ovsx create-namespace YuChenZhong -p <你的 token>
 4. 发布：
 
 ```bash
-npx ovsx publish -p <你的 token> dist/verdict-judge-0.1.5.vsix
+npx ovsx publish -p <你的 token> dist/verdict-judge-0.1.6.vsix
 ```
 
   它会提示命名空间是 "unverified"（没打勾）：不影响发布与安装。那个认证徽章要求命名空间
@@ -203,7 +203,7 @@ npx ovsx publish -p <你的 token> dist/verdict-judge-0.1.5.vsix
    open 'https://open-vsx.org/extension/YuChenZhong/verdict-judge'
    ```
 
-   VSCodium / Gitpod / Theia 里搜 `Verdict` 应当能装到 0.1.5。
+   VSCodium / Gitpod / Theia 里搜 `Verdict` 应当能装到 0.1.6。
 
 ### 两个市场怎么选
 
@@ -294,17 +294,18 @@ Azure DevOps 服务端的内部错误，与你的操作、与扩展本身都无�
 
 ## 这个仓库当前的状态
 
-- `pnpm package` 产出的 VSIX 已在本机用**官方安装器**验过两次（0.1.1 与 0.1.5），
+- `pnpm package` 产出的 VSIX 已在本机用**官方安装器**验过（0.1.1、0.1.4、0.1.6），
   装进隔离的 `--extensions-dir` 里确认能装上、版本号对得上，没有动你日常用的那份安装
   （本机现存的是 `yuchenzhong.verdict-judge@0.1.2`）。
-- **当前版本 0.1.5**（粘贴内联样例 / 删数据 / 导出补齐总库数据）。
+- **当前版本 0.1.6**（修成绩单里点格子不响应；0.1.5 是粘贴内联样例 / 删数据）。
   版本线：0.1.0 侧边栏评测面板 → 0.1.1 修 VSIX 格式 → 0.1.2 修使用反馈 →
-  0.1.3 数据总库与多场比赛 → 0.1.4 界面收口与选手池 → 0.1.5 内联样例与数据删除。
+  0.1.3 数据总库与多场比赛 → 0.1.4 界面收口与选手池 → 0.1.5 内联样例与数据删除 →
+  0.1.6 修成绩单点击。
   待发版本的包由 `pnpm package` 产出（`dist/verdict-judge-<版本>.vsix`，自带打包器，
   已按市场格式对齐，见上一节），首选上传这个。历史上还留过一个 `-vsce` 备用包，
   格式修好之后不再需要它。
   包里带 `CHANGELOG.md`，市场页因此会有 Changelog 标签页。
-  0.1.5 这一版额外做了一件事：包内的 `package.json` 剥掉 `devDependencies` 与 `scripts`
+  0.1.4 那一版额外做了一件事：包内的 `package.json` 剥掉 `devDependencies` 与 `scripts`
   （与 vsce 的产物对齐），包从 9 个文件 / 98.3KB 缩到 98.0KB。
 - **Open VSX：已发布 0.1.1 – 0.1.4**（命名空间 `YuChenZhong`；0.1.4 发布于 2026-10-02，
   当前 latest）。未认证（要求命名空间与 GitHub 用户名一致），不影响安装。

@@ -77,6 +77,11 @@ export function standingsToHtml(
     standings.cells.map((item) => [submissionKey(item.contestant, item.problem), item]),
   );
   const best = bestSubmissions(contest, submissions);
+  // 可点单元格的查找键是**详情在数组里的下标**：属性值只含 ASCII 数字，
+  // 不受 HTML 转义/编码影响（0.1.4 用「选手 id + NUL + 题目 id」当属性值时，
+  // 浏览器会把属性里的 NUL 换成 U+FFFD，于是点了没反应——只有真浏览器才暴露得出来）。
+  const detailList = opts.embedData ? buildDetails(contest, standings, best) : [];
+  const detailIndex = new Map(detailList.map((item, index) => [item.key, index]));
 
   const head = [
     '<th class="rank">#</th>',
@@ -93,7 +98,7 @@ export function standingsToHtml(
   const rows = standings.ranks
     .map((entry) => {
       const body = contest.problems
-        .map((problem) => renderCell(entry.contestant, problem.id, cells, best, opts))
+        .map((problem) => renderCell(entry.contestant, problem.id, cells, best, opts, detailIndex))
         .join('');
       const name = names.get(entry.contestant) ?? entry.contestant;
       return (
@@ -107,7 +112,7 @@ export function standingsToHtml(
   // 题目与测试点清单是「成绩单里能看到测试点详情」的一半：不点任何单元格时，
   // 也该看得出每道题有哪些点、分值怎么分、数据在哪。提交详情是另一半。
   const problems = renderProblems(contest);
-  const details = opts.embedData ? renderDetails(contest, standings, best) : '';
+  const details = opts.embedData ? renderDetails(detailList) : '';
 
   return [
     '<!DOCTYPE html>',
@@ -242,6 +247,7 @@ function renderCell(
   cells: Map<string, Standings['cells'][number]>,
   best: Map<string, Submission>,
   opts: ReportOptions,
+  detailIndex: Map<string, number>,
 ): string {
   const key = submissionKey(contestant, problem);
   const cell = cells.get(key);
@@ -254,9 +260,9 @@ function renderCell(
   const background = ratio > 0 ? colorOf(ratio, opts.theme) : '#ffffff';
   const color = ratio >= 0.8 ? '#ffffff' : '#1f2328';
   const label = maxScore > 0 ? `${String(score)}<span class="max">/${String(maxScore)}</span>` : String(score);
-  // 内嵌了逐步结果、且这一格确实有提交，才做成可点的；否则就是个普通单元格。
-  const clickable = opts.embedData && submission !== undefined;
-  const attribute = clickable ? ` data-cell="${escapeAttribute(key)}"` : '';
+  // 内嵌了逐步结果、且这一格确实在详情里，才做成可点的；否则就是个普通单元格。
+  const index = opts.embedData ? detailIndex.get(key) : undefined;
+  const attribute = index === undefined ? '' : ` data-cell="${String(index)}"`;
 
   return (
     `<td class="cell" style="background:${background};color:${color}"${attribute}>` +
@@ -264,11 +270,12 @@ function renderCell(
   );
 }
 
-function renderDetails(
+/** 逐格详情：只包含「有提交」的格子，数组下标就是要写进 `data-cell` 的键。 */
+function buildDetails(
   contest: Contest,
   standings: Standings,
   best: Map<string, Submission>,
-): string {
+): CellDetail[] {
   const points = new Map<string, number>();
   for (const problem of contest.problems) {
     for (const test of problem.tests) {
@@ -316,7 +323,10 @@ function renderDetails(
   for (const detail of details) {
     detail.contestant = names.get(detail.contestant) ?? detail.contestant;
   }
+  return details;
+}
 
+function renderDetails(details: CellDetail[]): string {
   // 放进 application/json 里而不是直接拼进脚本：这样里面的引号、换行都不需要额外转义，
   // 只要把 '<'（可能构成 </script>）转成 \u003c 就够了。
   const json = JSON.stringify(details).replace(/</g, '\\u003c');
@@ -373,12 +383,10 @@ const SCRIPT = `
   var table = document.getElementById('standings');
   if (!source || !panel || !table) { return; }
 
-  // 键必须与 td[data-cell] 上的值一致：那是「选手 id + \\u0000 + 题目 id」，
-  // 而 item.contestant 是显示名（alice 显示成 Alice）——两者的区别就是这个 bug 的根源。
+  // td[data-cell] 上写的是详情在数组里的下标（纯数字，不受 HTML 转义影响）。
+  var details = JSON.parse(source.textContent || '[]');
   var byCell = {};
-  JSON.parse(source.textContent || '[]').forEach(function (item) {
-    byCell[item.key] = item;
-  });
+  details.forEach(function (item, index) { byCell[String(index)] = item; });
 
   var activeCell = null;
 
@@ -500,7 +508,3 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;');
 }
 
-/** 属性里的 \u0000 是数据键的分隔符，转义时不能动它，只需要避开引号和尖括号。 */
-function escapeAttribute(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-}

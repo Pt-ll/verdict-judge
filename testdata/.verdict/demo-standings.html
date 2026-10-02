@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>演示赛 · 榜单</title>
+<style>
+:root { color-scheme: light; }
+body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; margin: 24px; color: #1f2328; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+h2 { font-size: 16px; margin: 24px 0 8px; }
+.meta { color: #59636e; margin: 0 0 16px; font-size: 13px; }
+.hint { color: #59636e; font-size: 13px; }
+table { border-collapse: collapse; font-size: 14px; }
+th, td { border: 1px solid #d1d9e0; padding: 6px 10px; text-align: center; }
+th { background: #f6f8fa; font-weight: 600; }
+td.name, th.name { text-align: left; }
+td.cell { min-width: 72px; }
+td.cell[data-cell] { cursor: pointer; }
+td.cell[data-cell]:hover { outline: 2px solid #1f6feb; outline-offset: -2px; }
+td.cell.active { outline: 2px solid #1f6feb; outline-offset: -2px; }
+.jump { color: inherit; text-decoration: none; }
+.jump:hover { text-decoration: underline; }
+#problems-nav a { color: #1f6feb; }
+.score { font-weight: 600; }
+.max { font-weight: 400; opacity: 0.75; font-size: 12px; }
+.verdict { display: block; font-size: 11px; opacity: 0.85; }
+td.total, th.total { font-weight: 700; }
+table.detail { margin-top: 4px; }
+h3 { font-size: 14px; margin: 16px 0 4px; }
+.problem { border: 1px solid #d1d9e0; border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; }
+.problem h3 { margin-top: 0; }
+.problem .meta { margin: 0 0 8px; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.meta strong { font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>演示赛</h1>
+<p class="meta">比赛 demo · 2 名选手 · 3 道题</p>
+<table id="standings"><thead><tr><th class="rank">#</th><th class="name">选手</th><th><a class="jump" href="#problem-A" title="跳到这道题的测试点清单">A</a></th><th><a class="jump" href="#problem-B" title="跳到这道题的测试点清单">B</a></th><th><a class="jump" href="#problem-C" title="跳到这道题的测试点清单">C</a></th><th class="total">总分</th></tr></thead><tbody>
+<tr><td class="rank">1</td><td class="name">Alice</td><td class="cell" style="background:#1f6feb;color:#ffffff" data-cell="0"><span class="score">100<span class="max">/100</span></span><span class="verdict">AC</span></td><td class="cell" style="background:#1f6feb;color:#ffffff" data-cell="1"><span class="score">100<span class="max">/100</span></span><span class="verdict">AC</span></td><td class="cell" style="background:#1f6feb;color:#ffffff" data-cell="2"><span class="score">100<span class="max">/100</span></span><span class="verdict">AC</span></td><td class="total">300</td></tr>
+<tr><td class="rank">2</td><td class="name">Bob</td><td class="cell" style="background:#cfe3ff;color:#1f2328" data-cell="3"><span class="score">30<span class="max">/100</span></span><span class="verdict">WA</span></td><td class="cell" style="background:#1f6feb;color:#ffffff" data-cell="4"><span class="score">100<span class="max">/100</span></span><span class="verdict">AC</span></td><td class="cell" style="background:#1f6feb;color:#ffffff" data-cell="5"><span class="score">100<span class="max">/100</span></span><span class="verdict">AC</span></td><td class="total">230</td></tr>
+</tbody></table>
+<h2>题目与测试点</h2>
+<p class="meta" id="problems-nav">题目：<a href="#problem-A">A</a> · <a href="#problem-B">B</a> · <a href="#problem-C">C</a></p>
+<section class="problem" id="problem-A">
+<h3>A · A. 求和</h3>
+<p class="meta">时间 1000ms · 内存 256MB · 栈 256MB · 输出上限 4096KB<br>比较方式：默认（忽略行尾空白）</p>
+<table class="detail"><thead><tr><th>子任务</th><th class="name">名称</th><th>分值</th><th>点分合计</th><th class="name">测试点</th><th class="name">依赖</th><th>计分</th></tr></thead><tbody><tr><td>1</td><td class="name">小数据</td><td>30</td><td>30</td><td class="name">1</td><td class="name">无</td><td>组内全对</td></tr><tr><td>2</td><td class="name">大数据</td><td>70</td><td>70</td><td class="name">2</td><td class="name">无</td><td>组内全对</td></tr></tbody></table>
+<table class="detail"><thead><tr><th>测试点</th><th>分值</th><th class="name">子任务</th><th class="name">输入</th><th class="name">答案</th></tr></thead><tbody><tr><td>1</td><td>30</td><td class="name">1</td><td class="name mono">1.in</td><td class="name mono">1.out</td></tr><tr><td>2</td><td>70</td><td class="name">2</td><td class="name mono">2.in</td><td class="name mono">2.out</td></tr></tbody></table>
+<p class="meta"><a href="#standings">↑ 回到榜单</a></p>
+</section>
+<section class="problem" id="problem-B">
+<h3>B · B. 最大值</h3>
+<p class="meta">时间 1000ms · 内存 256MB · 栈 256MB · 输出上限 4096KB<br>比较方式：默认（忽略行尾空白）</p>
+<p class="meta">没有分子任务：每个测试点按自己的分值直接计入总分。</p>
+<table class="detail"><thead><tr><th>测试点</th><th>分值</th><th class="name">子任务</th><th class="name">输入</th><th class="name">答案</th></tr></thead><tbody><tr><td>1</td><td>100</td><td class="name">—</td><td class="name mono">1.in</td><td class="name mono">1.out</td></tr></tbody></table>
+<p class="meta"><a href="#standings">↑ 回到榜单</a></p>
+</section>
+<section class="problem" id="problem-C">
+<h3>C · C. 猜数字</h3>
+<p class="meta">时间 2000ms · 内存 256MB · 栈 256MB · 输出上限 4096KB<br>比较方式：交互题（extra/interactor.cpp）</p>
+<p class="meta">没有分子任务：每个测试点按自己的分值直接计入总分。</p>
+<table class="detail"><thead><tr><th>测试点</th><th>分值</th><th class="name">子任务</th><th class="name">输入</th><th class="name">答案</th></tr></thead><tbody><tr><td>1</td><td>100</td><td class="name">—</td><td class="name mono">1.in</td><td class="name mono">1.out</td></tr></tbody></table>
+<p class="meta"><a href="#standings">↑ 回到榜单</a></p>
+</section>
+<script type="application/json" id="verdict-details">[{"key":"alice\u0000A","contestant":"Alice","problem":"A","score":100,"maxScore":100,"verdict":"AC","time":"2026-10-02T11:24:50.896Z","rejudgeCount":0,"subtasks":[{"id":"1","score":30,"maxScore":30,"status":"full"},{"id":"2","score":70,"maxScore":70,"status":"full"}],"cases":[{"test":"1","verdict":"AC","score":30,"points":30,"timeMs":5,"memoryKb":0,"message":"输出一致"},{"test":"2","verdict":"AC","score":70,"points":70,"timeMs":7,"memoryKb":0,"message":"输出一致"}]},{"key":"alice\u0000B","contestant":"Alice","problem":"B","score":100,"maxScore":100,"verdict":"AC","time":"2026-10-02T11:24:50.910Z","rejudgeCount":0,"subtasks":[],"cases":[{"test":"1","verdict":"AC","score":100,"points":100,"timeMs":7,"memoryKb":0,"message":"输出一致"}]},{"key":"alice\u0000C","contestant":"Alice","problem":"C","score":100,"maxScore":100,"verdict":"AC","time":"2026-10-02T11:24:50.917Z","rejudgeCount":0,"subtasks":[],"cases":[{"test":"1","verdict":"AC","score":100,"points":100,"timeMs":10,"memoryKb":0,"message":"交互器 判定通过"}]},{"key":"bob\u0000A","contestant":"Bob","problem":"A","score":30,"maxScore":100,"verdict":"WA","time":"2026-10-02T11:24:50.941Z","rejudgeCount":1,"subtasks":[{"id":"1","score":30,"maxScore":30,"status":"full"},{"id":"2","score":0,"maxScore":70,"status":"none"}],"cases":[{"test":"1","verdict":"AC","score":30,"points":30,"timeMs":5,"memoryKb":0,"message":"输出一致"},{"test":"2","verdict":"WA","score":0,"points":70,"timeMs":4,"memoryKb":0,"message":"第 1 行不同：答案 \"4000000000\"，实际 \"-294967296\"","firstDiffLine":1}]},{"key":"bob\u0000B","contestant":"Bob","problem":"B","score":100,"maxScore":100,"verdict":"AC","time":"2026-10-02T11:24:50.957Z","rejudgeCount":0,"subtasks":[],"cases":[{"test":"1","verdict":"AC","score":100,"points":100,"timeMs":9,"memoryKb":0,"message":"输出一致"}]},{"key":"bob\u0000C","contestant":"Bob","problem":"C","score":100,"maxScore":100,"verdict":"AC","time":"2026-10-02T11:24:50.968Z","rejudgeCount":0,"subtasks":[],"cases":[{"test":"1","verdict":"AC","score":100,"points":100,"timeMs":12,"memoryKb":0,"message":"交互器 判定通过"}]}]</script>
+<h2>提交详情</h2>
+<p class="hint" id="verdict-hint">点上面的分数单元格查看这一次提交的逐子任务与逐测试点结果。</p>
+<div id="verdict-panel"></div>
+<script>
+(function () {
+  var source = document.getElementById('verdict-details');
+  var panel = document.getElementById('verdict-panel');
+  var table = document.getElementById('standings');
+  if (!source || !panel || !table) { return; }
+
+  // td[data-cell] 上写的是详情在数组里的下标（纯数字，不受 HTML 转义影响）。
+  var details = JSON.parse(source.textContent || '[]');
+  var byCell = {};
+  details.forEach(function (item, index) { byCell[String(index)] = item; });
+
+  var activeCell = null;
+
+  function text(value) { return String(value == null ? '' : value); }
+
+  function el(tag, className, value) {
+    var node = document.createElement(tag);
+    if (className) { node.className = className; }
+    if (value !== undefined && value !== null && value !== '') { node.textContent = text(value); }
+    return node;
+  }
+
+  function row(cells) {
+    var line = document.createElement('tr');
+    cells.forEach(function (item) {
+      line.appendChild(el('td', item && item.className ? item.className : null,
+        item && item.value !== undefined ? item.value : item));
+    });
+    return line;
+  }
+
+  // 名字不能叫 table：上面那个 table 变量拿着榜单 <table>，同名会把函数覆盖掉，
+  // 点单元格时直接抛 "table is not a function"——详情一个字都画不出来。
+  function detailTable(headers, rows) {
+    var node = el('table', 'detail');
+    var head = document.createElement('tr');
+    headers.forEach(function (item) {
+      var th = el('th', item && item.className ? item.className : null, item && item.label !== undefined ? item.label : item);
+      head.appendChild(th);
+    });
+    var headGroup = document.createElement('thead');
+    headGroup.appendChild(head);
+    node.appendChild(headGroup);
+    var body = document.createElement('tbody');
+    rows.forEach(function (item) { body.appendChild(item); });
+    node.appendChild(body);
+    return node;
+  }
+
+  function memory(kb) {
+    return kb > 0 ? (kb / 1024).toFixed(1) + 'MB' : 'n/a';
+  }
+
+  function render(detail) {
+    // 全部用 createElement / textContent 建：说明里带尖括号也只是文字，不会被当成标签。
+    while (panel.firstChild) { panel.removeChild(panel.firstChild); }
+
+    var summary = el('p');
+    summary.appendChild(el('strong', null, detail.contestant + ' · ' + detail.problem));
+    summary.appendChild(document.createTextNode(
+      '：' + text(detail.score) + '/' + text(detail.maxScore) + ' 分 ' + text(detail.verdict) +
+      (detail.message ? '（' + text(detail.message) + '）' : '') +
+      (detail.rejudgeCount ? ' · 已重测 ' + text(detail.rejudgeCount) + ' 次' : '') +
+      ' · 提交于 ' + text(detail.time)));
+    panel.appendChild(summary);
+
+    if (detail.subtasks && detail.subtasks.length > 0) {
+      panel.appendChild(el('h3', null, '子任务'));
+      panel.appendChild(detailTable(
+        [{ label: '子任务' }, { label: '得分' }, { label: '满分' }, { label: '状态', className: 'name' }],
+        detail.subtasks.map(function (item) {
+          return row([item.id, item.score, item.maxScore,
+            { value: statusText(item.status), className: 'name' }]);
+        })));
+    }
+
+    if (!detail.cases || detail.cases.length === 0) {
+      panel.appendChild(el('p', 'meta', '这次提交没有逐测试点结果（例如编译失败）。'));
+      return;
+    }
+
+    panel.appendChild(el('h3', null, '逐测试点'));
+    panel.appendChild(detailTable(
+      [{ label: '测试点' }, { label: '判定' }, { label: '得分' }, { label: '满分' },
+       { label: '用时' }, { label: '内存' }, { label: '首个不同行' }, { label: '说明', className: 'name' }],
+      detail.cases.map(function (item) {
+        return row([
+          item.test,
+          item.verdict,
+          item.score,
+          item.points,
+          text(item.timeMs) + 'ms',
+          memory(item.memoryKb),
+          item.firstDiffLine === undefined ? '—' : '第 ' + text(item.firstDiffLine) + ' 行',
+          { value: text(item.message) || '—', className: 'name' },
+        ]);
+      })));
+  }
+
+  function statusText(status) {
+    if (status === 'full') { return '满分'; }
+    if (status === 'partial') { return '部分分'; }
+    if (status === 'none') { return '未得分'; }
+    if (status === 'skipped') { return '依赖未满足，已跳过'; }
+    return text(status);
+  }
+
+  table.addEventListener('click', function (event) {
+    var cell = event.target.closest('td[data-cell]');
+    if (!cell) { return; }
+    var detail = byCell[cell.getAttribute('data-cell')];
+    if (!detail) { return; }
+    render(detail);
+    // 点过的格子留个记号，滚回来时知道刚才看的是哪一格。
+    if (activeCell) { activeCell.className = 'cell'; }
+    cell.className = 'cell active';
+    activeCell = cell;
+    // 详情画在页面下方：不滚过去的话，点了像没反应——这就是「点击跳转」。
+    if (panel.scrollIntoView) { panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  });
+})();
+</script>
+</body>
+</html>
