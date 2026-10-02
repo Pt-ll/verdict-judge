@@ -334,6 +334,7 @@ WA 时执行 `vscode.commands.executeCommand('vscode.diff', outputUri, answerUri
 | 面板 → 扩展 | `judge` / `judgeCase` / `debug` / `debugCase` / `openDiff` | 评测与运行 |
 | 面板 → 扩展 | `setLimits` / `setComparator` / `pickComparatorFile` | 改限制与比较方式 |
 | 面板 → 扩展 | `scanTests` / `moveTest` / `removeTest` / `addSubtask` / `removeSubtask` / `updateSubtask` / `evenSubtasks` / `clearSubtasks` | 改测试点与子任务 |
+| 面板 → 扩展 | `addSample` / `deleteTest` | 粘贴内联样例（0.1.5）、删除样例或数据文件 |
 | 面板 → 扩展 | `openCaseFile` / `openDataDir` / `openProblemJson` | 用编辑器打开文件，不重造编辑器 |
 | 面板 → 扩展 | `rejudge` / `cancel` / `command` | 重测、取消、执行白名单里的命令（`command` 可带一个 `arg`，例如题目 id） |
 | 扩展 → 面板 | `data` | 比赛、题目、测试点、最近结果、榜单 |
@@ -834,7 +835,8 @@ id 以文件名为准（文件里的 `id` 字段与文件名不一致会当场�
     { "id": "2", "points": 70, "tests": ["4","5","6"], "dependsOn": ["1"], "scoring": "min" }
   ],
   "tests": [
-    { "id": "1", "input": "1.in", "answer": "1.out", "points": 10, "subtask": "1" }
+    { "id": "1", "input": "1.in", "answer": "1.out", "points": 10, "subtask": "1" },
+    { "id": "sample-1", "inputText": "1 2\n", "answerText": "3\n", "points": 0 }
   ],
   "sourceDir": "players/*/A",
   "answerDir": "players/*/A"
@@ -846,6 +848,13 @@ id 以文件名为准（文件里的 `id` 字段与文件名不一致会当场�
 - `tests` 可以省略（或写 `[]`）：此时扫描 `data/` 下的 `1.in/1.out`、`*.ans`、`sample*` 等命名约定，
   按数字序排列（`2` 排在 `10` 前）。测试点路径一律相对**数据目录**（§6.1），即写成 `1.in`；
   0.1.2 的 `data/1.in` 也照读（加载时归一）。
+- 测试点的输入与答案各有**两种形态，二选一**：文件（`input` / `answer`）或**内联内容**
+  （`inputText` / `answerText`，0.1.5）。内联样例的内容就是 `problem.json` 里的一段字符串，
+  不为它生成 `.in` / `.out`：它跟着题目一起保存、导出、进 git，删除也只是从文件里去掉那段。
+  判题时内联内容按 UTF-8 编码成字节，与读文件走同一条比较路径（§5.4 按字节比较）。
+  同一侧两个都写（或都不写）会在加载时报错——以哪个为准没有合理答案。
+  内联样例的空串是合法的（「这道题没有输入」），因此这里不看 `readString` 的「非空」判断。
+  调试时内联样例会被落到缓存目录当 stdin 文件（调试器只认路径，见 §4.8）。
 - `dataDir` 可选：数据放在别处时写它（相对题目包根目录，例如 `"../../shared/A"`）。
   既不是包内 `data/`、也不是总库约定位置时才写回文件——约定位置跟着题目包算，搬走也不会失效。
 - 子任务成员关系以 `subtasks[].tests` 为准；只有它是空的时候，才用测试点的 `subtask` 字段补出来。
@@ -1083,6 +1092,16 @@ exitCode != 0          -> RE
 - 「新建选手」/「加进比赛」之后，`players/<id>/` 一定存在（第一次连 `players/` 一起建），
   用户不必手工建目录；写在外面的 `folder` 会被拒绝。
 - 导出的成绩单里，点表头能跳到对应题目的测试点清单，点分数格子会滚到并高亮详情。
+
+### M8 — 内联样例 + 数据删除（0.1.5）
+交付：测试点的内联形态（`inputText` / `answerText`，§6.3）、面板上的「＋ 粘贴样例」与
+「删除样例」/「删除数据文件」、导出题目包时把总库数据收进包内 `data/`。
+验收：
+- 粘贴一个样例后，`problem.json` 里出现 `inputText` / `answerText`，数据目录里**不新增任何文件**；
+  这一行 `▶` 能跑出判定，默认 0 分、不改变整题满分。
+- 删样例只改 `problem.json`；删数据文件把 `.in` / `.out` 送进回收站并取消登记（面板里点两次确认）。
+- 数据在 `.verdict/data/<id>/` 的题目导出成 ZIP 后，包内 `data/` 里带着数据；
+  在另一处导入仍能评测（导入落回包内，再按命令行搬到总库）。
 
 ---
 
@@ -1493,8 +1512,8 @@ ZIP（`[Content_Types].xml` + `extension.vsixmanifest` + `extension/**`），复
 步骤见 `PUBLISHING.md`（含官方市场与 Open VSX 两条路线，以及在 PAT 卡住时用网页直接传 VSIX 的办法）。
 
 ```bash
-pnpm package                                             # 生成 dist/verdict-<版本>.vsix
-code --install-extension dist/verdict-judge-0.1.3.vsix   # 安装
+pnpm package                                             # 生成 dist/verdict-judge-<版本>.vsix
+code --install-extension dist/verdict-judge-0.1.5.vsix   # 安装（版本号见 package.json）
 ```
 
 ---

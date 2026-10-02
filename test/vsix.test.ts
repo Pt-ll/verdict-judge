@@ -236,6 +236,23 @@ describe('发布前置条件', () => {
     expect(fs.existsSync(path.join(root, 'LICENSE'))).toBe(true);
   });
 
+  it('文档里写到的 VSIX 文件名与当前版本一致', () => {
+    // 发一次版就要改一遍文档里的安装命令，靠人记必然会漏（0.1.3 就在 README 里留了两版）。
+    // 这里把所有 `…verdict-judge-<版本>.vsix` 的提法钉在当前版本上，改漏了单测直接红。
+    const files = ['README.md', 'PUBLISHING.md', 'SPEC.md', 'docs/wiki/插件使用说明.md'];
+    const stale: string[] = [];
+    for (const relative of files) {
+      const text = fs.readFileSync(path.join(root, relative), 'utf8');
+      for (const match of text.matchAll(/verdict-judge-(\d+\.\d+\.\d+)\.vsix/g)) {
+        if (match[1] !== manifest.version) {
+          stale.push(`${relative}: ${match[0]}`);
+        }
+      }
+    }
+
+    expect(stale).toEqual([]);
+  });
+
   it('图标是 128×128，README 也在（市场页面的门面）', () => {
     const icon = fs.readFileSync(path.join(root, manifest.icon));
 

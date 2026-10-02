@@ -12,7 +12,7 @@ import {
 } from '../model';
 import { scanTests } from './scan';
 import { topoOrderSubtasks } from './subtasks';
-import { isFile } from '../../util/files';
+import { isFile, readFileOrNull } from '../../util/files';
 import { isInside } from '../../util/paths';
 import { DATA_DIR, PROBLEMS_DIR, VERDICT_DIR } from '../layout';
 import {
@@ -113,15 +113,90 @@ export async function saveProblem(pkg: ProblemPackage): Promise<void> {
   await fs.promises.writeFile(target, text, 'utf8');
 }
 
-/** 把测试点的相对路径还原成绝对路径（基准是数据目录，SPEC §6.3）。 */
+/**
+ * 把测试点的相对路径还原成绝对路径（基准是数据目录，SPEC §6.3）。
+ *
+ * 内联样例（`inputText` / `answerText`）没有文件，对应的那一项是 null。
+ */
 export function resolveTestPath(
   pkg: ProblemPackage,
   test: TestCase,
-): { inputPath: string; answerPath: string } {
+): { inputPath: string | null; answerPath: string | null } {
   return {
-    inputPath: dataFilePath(pkg, test.input),
-    answerPath: dataFilePath(pkg, test.answer),
+    inputPath: test.input === undefined ? null : dataFilePath(pkg, test.input),
+    answerPath: test.answer === undefined ? null : dataFilePath(pkg, test.answer),
   };
+}
+
+/** 这个测试点是内联样例（内容写在 problem.json 里）还是数据文件。 */
+export function isInlineTest(test: TestCase): boolean {
+  return test.inputText !== undefined || test.answerText !== undefined;
+}
+
+/**
+ * 拿一个**真实文件**当这个测试点的输入（调试用），返回路径；没有输入时为 null。
+ *
+ * 数据文件直接用它自己的路径；内联样例没有文件，调试器（lldb / gdb / debugpy）又只认路径，
+ * 所以在缓存目录里落一份同名的临时文件——它不进工作区，也不进题目包，删了也没关系。
+ */
+export async function materializeTestInput(
+  pkg: ProblemPackage,
+  test: TestCase,
+  cacheDir: string,
+): Promise<string | null> {
+  const file = resolveTestPath(pkg, test).inputPath;
+  if (file !== null) {
+    return file;
+  }
+  if (test.inputText === undefined) {
+    return null;
+  }
+  const dir = path.join(cacheDir, 'inline-input');
+  await fs.promises.mkdir(dir, { recursive: true });
+  const target = path.join(dir, `${pkg.problem.id}-${test.id}.in`);
+  await fs.promises.writeFile(target, test.inputText, 'utf8');
+  return target;
+}
+
+/**
+ * 读出这个测试点的输入与答案（判题用）。
+ *
+ * 两种形态在这里归一成字节：文件读出来是字节，内联样例按 UTF-8 编码成字节——
+ * 比较器全程按字节比，所以这条路上不能提前把文件内容当字符串处理。
+ * 读不到文件时返回 error（点名是哪一个），由调用方判成测试数据问题而不是选手的错。
+ */
+export async function readTestData(
+  pkg: ProblemPackage,
+  test: TestCase,
+): Promise<{ input: Buffer; answer: Buffer } | { error: string }> {
+  const input = await readSide(pkg, test, 'input');
+  if (typeof input === 'string') {
+    return { error: input };
+  }
+  const answer = await readSide(pkg, test, 'answer');
+  if (typeof answer === 'string') {
+    return { error: answer };
+  }
+  return { input, answer };
+}
+
+async function readSide(
+  pkg: ProblemPackage,
+  test: TestCase,
+  side: 'input' | 'answer',
+): Promise<Buffer | string> {
+  const text = side === 'input' ? test.inputText : test.answerText;
+  if (text !== undefined) {
+    return Buffer.from(text, 'utf8');
+  }
+  const relative = side === 'input' ? test.input : test.answer;
+  if (relative === undefined) {
+    // 加载期已经拦过（两个都没写），这里只是防御。
+    return `测试点 ${test.id} 既没有${side === 'input' ? '输入' : '答案'}文件也没有内联内容`;
+  }
+  const file = dataFilePath(pkg, relative);
+  const data = await readFileOrNull(file);
+  return data ?? `无法读取测试数据：${file}`;
 }
 
 /** 数据目录里的一个相对路径 → 绝对路径（面板、Testing、调试都用它，别再各自拼 rootDir）。 */
@@ -397,23 +472,31 @@ async function readTests(raw: unknown, ctx: BuildContext): Promise<TestCase[]> {
     }
     seen.add(id);
 
+    // 输入与答案各有两种写法：给文件（input / answer）或给内容（inputText / answerText）。
+    // 两个都给是配置错误——到底以哪个为准没有合理答案，不如当场说清楚。
     const input = readString(item.input);
     const answer = readString(item.answer);
-    if (input === undefined) {
-      issues.add(`测试点 "${id}" 缺少 input`);
-    }
-    if (answer === undefined) {
-      issues.add(`测试点 "${id}" 缺少 answer`);
-    }
-    if (input === undefined || answer === undefined) {
+    // 内联样例用「原样字符串」判断：空字符串是合法的（「这道题没有输入」），
+    // 而 readString 会把空串当成没写，所以这里单独读。
+    const inputText = readSampleText(item.inputText, id, 'inputText', issues);
+    const answerText = readSampleText(item.answerText, id, 'answerText', issues);
+    const inputBad = checkSide(id, 'input', 'inputText', input, inputText, issues);
+    const answerBad = checkSide(id, 'answer', 'answerText', answer, answerText, issues);
+    if (inputBad || answerBad) {
       return;
     }
 
-    const test: TestCase = {
-      id,
-      input: normalizeTestPath(input),
-      answer: normalizeTestPath(answer),
-    };
+    const test: TestCase = { id };
+    if (inputText !== undefined) {
+      test.inputText = inputText;
+    } else if (input !== undefined) {
+      test.input = normalizeTestPath(input);
+    }
+    if (answerText !== undefined) {
+      test.answerText = answerText;
+    } else if (answer !== undefined) {
+      test.answer = normalizeTestPath(answer);
+    }
     const points = readNonNegative(item.points, `测试点 "${id}" 的 points`, issues);
     if (points !== undefined) {
       test.points = points;
@@ -429,6 +512,54 @@ async function readTests(raw: unknown, ctx: BuildContext): Promise<TestCase[]> {
     tests.push(test);
   });
   return tests;
+}
+
+/**
+ * 输入 / 答案的一侧是否合法：文件与内容必须二选一。
+ *
+ * 返回 true 表示这一侧有问题（已经记进 issues），调用方跳过这个测试点。
+ */
+function checkSide(
+  id: string,
+  fileKey: string,
+  textKey: string,
+  file: string | undefined,
+  text: string | undefined,
+  issues: ConfigIssues,
+): boolean {
+  if (file !== undefined && text !== undefined) {
+    issues.add(`测试点 "${id}" 同时写了 ${fileKey} 与 ${textKey}，只能二选一`);
+    return true;
+  }
+  if (file === undefined && text === undefined) {
+    issues.add(
+      `测试点 "${id}" 缺少 ${fileKey}（数据文件名）或 ${textKey}（内联样例内容），至少要写一个`,
+    );
+    return true;
+  }
+  return false;
+}
+
+/**
+ * 读内联样例的内容：**空字符串也算写了**。
+ *
+ * `readString` 把 `""` 当作没写（对文件名、id 之类是对的），但样例里
+ * 「输入是空的」（不读任何输入直接输出）完全正常，所以这里只看类型。
+ */
+function readSampleText(
+  value: unknown,
+  id: string,
+  key: string,
+  issues: ConfigIssues,
+): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== 'string') {
+    issues.add(`测试点 "${id}" 的 ${key} 必须是字符串，现在是 ${describe(value)}`);
+    return undefined;
+  }
+  return value;
 }
 
 /**

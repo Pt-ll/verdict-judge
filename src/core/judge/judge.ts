@@ -10,9 +10,8 @@ import type {
   RunVerdict,
   Verdict,
 } from '../model';
-import { resolveTestPath, type ProblemPackage } from '../problem/package';
+import { readTestData, type ProblemPackage } from '../problem/package';
 import type { RunCommand, RunResult, Sandbox } from '../sandbox/sandbox';
-import { readFileOrNull } from '../../util/files';
 import { scoreProblem } from './score';
 import { checkerLimits } from '../model';
 import type { InteractiveRunner } from '../compare/interactive';
@@ -288,11 +287,9 @@ export async function judgeProblem(
     }
 
     onProgress?.(`评测 ${test.id}（${cases.length + 1}/${tests.length}）`);
-    const { inputPath, answerPath } = resolveTestPath(pkg, test);
-    const input = await readFileOrNull(inputPath);
-    const answer = await readFileOrNull(answerPath);
-
-    if (input === null || answer === null) {
+    // 内联样例与数据文件在这里归一成字节，下面一视同仁（§5.4 的按字节比较）。
+    const data = await readTestData(pkg, test);
+    if ('error' in data) {
       cases.push({
         test: test.id,
         verdict: 'UKE',
@@ -302,12 +299,13 @@ export async function judgeProblem(
         exitCode: null,
         signal: null,
         // 数据读不到是评测环境的问题，不是选手程序的错；写清是哪个文件读不到。
-        message: `无法读取测试数据：${input === null ? inputPath : answerPath}`,
+        message: data.error,
         output: Buffer.alloc(0),
-        answer: answer ?? Buffer.alloc(0),
+        answer: Buffer.alloc(0),
       });
       continue;
     }
+    const { input, answer } = data;
 
     cases.push(
       await judge.judgeCase(

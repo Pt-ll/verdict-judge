@@ -79,11 +79,19 @@ export async function findTestsBesideSource(
   return tests.length > 0 ? { dataDir: sourceDir, tests } : null;
 }
 
-/** 把测试点的相对文件名还原成可读写的绝对路径。 */
+/**
+ * 把测试点的相对文件名还原成可读写的绝对路径。
+ *
+ * 只用于 M1 的约定式查找（findTestsBesideSource）：那条路上测试点一律来自文件，
+ * 不存在内联样例，所以这里把可选字段当成必填用。
+ */
 export function resolveTestFiles(
   location: TestDataLocation,
   test: TestCase,
 ): { inputPath: string; answerPath: string } {
+  if (test.input === undefined || test.answer === undefined) {
+    throw new Error(`测试点 ${test.id} 没有数据文件（约定式查找只认文件形式）`);
+  }
   return {
     inputPath: path.join(location.dataDir, test.input),
     answerPath: path.join(location.dataDir, test.answer),

@@ -93,6 +93,7 @@ async function run() {
   await checkControlPanel(api, folder.uri);
   await checkContestantPool(api, folder.uri);
   await checkContestantFolderAutoCreate(api, folder.uri);
+  await checkInlineSample(api, folder.uri);
   await checkDebug(api, folder.uri);
   await checkContest(api);
 
@@ -328,6 +329,80 @@ async function checkContestPool(api, root) {
  * 在选手池里声明一个还没有目录的人，然后只做「加入这场比赛」这一个动作：
  * `players/<id>/` 应当被他建出来，用户接着把源码丢进去就行。
  */
+/**
+ * 内联样例与数据删除（0.1.5）。
+ *
+ * 走面板真正的两个动作：
+ *   - `addSample`：把题面里的样例粘进来 —— 内容进 problem.json，不生成 .in / .out；
+ *   - `deleteTest`：删样例（只动 problem.json）与删数据文件（文件进回收站 + 取消登记）。
+ */
+async function checkInlineSample(api, root) {
+  const problemFile = path.join(root.fsPath, '.verdict', 'problems', 'B', 'problem.json');
+  const original = fs.readFileSync(problemFile, 'utf8');
+  const dataDir = path.join(root.fsPath, '.verdict', 'data', 'B');
+  // 删数据这一步是真的删磁盘文件，所以先把原文读进内存，结束时逐字节写回去。
+  const originalData = new Map(
+    ['1.in', '1.out'].map((name) => [name, fs.readFileSync(path.join(dataDir, name))]),
+  );
+
+  try {
+    await api.dispatchPanel({ type: 'selectProblem', problemId: 'B' });
+    // 用 B 题真实数据的原文当样例：alice 的程序对这份输入是 AC，断言才能说明问题。
+    const sampleInput = originalData.get('1.in').toString('utf8');
+    const sampleAnswer = originalData.get('1.out').toString('utf8');
+    await api.dispatchPanel({ type: 'addSample', input: sampleInput, answer: sampleAnswer });
+
+    const written = JSON.parse(fs.readFileSync(problemFile, 'utf8'));
+    const sample = written.tests.find((test) => test.inputText !== undefined);
+    assert.ok(sample, '粘贴的样例应当直接写进 problem.json 的 tests 里');
+    assert.equal(sample.inputText, sampleInput);
+    assert.equal(sample.answerText, sampleAnswer);
+    assert.equal(sample.points, 0, '样例默认 0 分，不该撑大整题满分');
+    assert.ok(
+      !fs.existsSync(path.join(dataDir, `${sample.id}.in`)),
+      `样例不该生成数据文件，实际多出了 ${sample.id}.in`,
+    );
+
+    // 样例能直接跑：打开 alice 的 B 题，只跑这个样例，应当是 AC。
+    await openSource(root, 'players/alice/B.cpp');
+    await api.dispatchPanel({ type: 'judgeCase', testId: sample.id });
+    const panelTest = api
+      .panelState()
+      .selected.tests.find((item) => item.id === sample.id);
+    assert.equal(panelTest.verdict, 'AC', `样例应当判 AC，实际 ${panelTest.verdict}`);
+    assert.equal(panelTest.inline, true, '面板应当知道这是内联样例');
+    console.log('[verdict] 内联样例：粘贴后直接跑通（未生成任何数据文件）');
+
+    // 删样例：只从 problem.json 里去掉了它。
+    await api.dispatchPanel({ type: 'deleteTest', testId: sample.id });
+    const afterDelete = JSON.parse(fs.readFileSync(problemFile, 'utf8'));
+    assert.ok(
+      !afterDelete.tests.some((test) => test.id === sample.id),
+      '删样例之后 problem.json 里不该还有它',
+    );
+
+    // 删数据文件：B 题的 1.in / 1.out 应当真的从磁盘上消失，登记也没了。
+    const inputFile = path.join(dataDir, '1.in');
+    const answerFile = path.join(dataDir, '1.out');
+    assert.ok(fs.existsSync(inputFile) && fs.existsSync(answerFile), '前置条件：B 题的数据文件在');
+    await api.dispatchPanel({ type: 'deleteTest', testId: '1', withData: true });
+    assert.ok(
+      !fs.existsSync(inputFile) && !fs.existsSync(answerFile),
+      '删除数据文件之后 1.in / 1.out 不该还在',
+    );
+    const afterData = JSON.parse(fs.readFileSync(problemFile, 'utf8'));
+    assert.equal(afterData.tests.length, 0, '删数据文件时也应当取消登记');
+    console.log('[verdict] 数据删除：数据文件进回收站，登记同时移除');
+  } finally {
+    fs.writeFileSync(problemFile, original, 'utf8');
+    fs.mkdirSync(dataDir, { recursive: true });
+    for (const [name, bytes] of originalData) {
+      fs.writeFileSync(path.join(dataDir, name), bytes);
+    }
+    await api.dispatchPanel({ type: 'refresh' });
+  }
+}
+
 async function checkContestantFolderAutoCreate(api, root) {
   const playersFile = path.join(root.fsPath, '.verdict', 'players.json');
   const contestFile = path.join(root.fsPath, '.verdict', 'contests', 'demo.json');

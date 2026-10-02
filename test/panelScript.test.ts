@@ -143,6 +143,7 @@ function testRow(id: string, verdict: Verdict | null): PanelTest {
     id,
     input: `data/${id}.in`,
     answer: `data/${id}.out`,
+    inline: false,
     points: 50,
     subtask: '1',
     verdict,

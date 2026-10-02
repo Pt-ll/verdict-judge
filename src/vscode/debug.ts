@@ -15,7 +15,8 @@ import { createSandbox, type RunCommand } from '../core/sandbox/sandbox';
 import {
   findProblemRoot,
   loadProblem,
-  resolveTestPath,
+  materializeTestInput,
+  readTestData,
   type ProblemPackage,
 } from '../core/problem/package';
 import { findTestsBesideSource, resolveTestFiles } from '../core/problem/scan';
@@ -82,7 +83,7 @@ export async function startDebug(
   const sourcePath = document.uri.fsPath;
   const engine = readEngineOptions(deps.context);
 
-  const found = await findDebugTarget(sourcePath, target);
+  const found = await findDebugTarget(sourcePath, target, engine.cacheDir);
   if ('message' in found) {
     return found;
   }
@@ -201,6 +202,7 @@ interface DebugTargetFiles {
 async function findDebugTarget(
   sourcePath: string,
   target: DebugTarget,
+  cacheDir: string,
 ): Promise<DebugTargetFiles | { kind: 'no-tests'; message: string }> {
   const root =
     target.problemRoot ?? (await findProblemRoot(path.dirname(sourcePath), workspaceRoot()));
@@ -222,7 +224,8 @@ async function findDebugTarget(
     }
     return {
       testId: test.id,
-      inputPath: resolveTestPath(pkg, test).inputPath,
+      // 内联样例没有文件，调试器只认路径：落到缓存目录里再喂给它。
+      inputPath: (await materializeTestInput(pkg, test, cacheDir)) ?? undefined,
       cwd: pkg.rootDir,
       problemPackage: pkg,
       problem: pkg.problem,
@@ -304,14 +307,12 @@ async function prepareReplay(
     return { ok: false, message: '这个题目不是交互题，但比较方式写着 interactive。' };
   }
 
-  const { inputPath, answerPath } = resolveTestPath(problemPackage, test);
-  const [input, answer] = await Promise.all([
-    readFileOrNull(inputPath),
-    readFileOrNull(answerPath),
-  ]);
-  if (input === null || answer === null) {
-    return { ok: false, message: `读不到测试数据：${input === null ? inputPath : answerPath}` };
+  // 交互题把输入与答案喂给 interactor：内联样例与数据文件在这里同样归一成字节。
+  const data = await readTestData(problemPackage, test);
+  if ('error' in data) {
+    return { ok: false, message: data.error };
   }
+  const { input, answer } = data;
 
   const outcome = await prepared.interactive.run(runCmd, input, answer, problem.limits);
   const dir = path.join(engine.cacheDir, 'debug');
@@ -352,13 +353,6 @@ function readStopAtEntry(): boolean {
   );
 }
 
-async function readFileOrNull(target: string): Promise<Buffer | null> {
-  try {
-    return await fs.promises.readFile(target);
-  } catch {
-    return null;
-  }
-}
 
 /** 失败时给用户看的那句话；成功（起了调试会话）返回 null。 */
 export function debugFailureText(result: DebugResult): string | null {

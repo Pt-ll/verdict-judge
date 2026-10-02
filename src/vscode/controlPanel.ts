@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import type { ComparatorConfig, Limits } from '../core/model';
 import { summarizeVerdict } from '../core/model';
 import {
+  addSampleTest,
   addSubtask,
   clearSubtasks,
   evenSubtasks,
@@ -20,6 +21,7 @@ import {
   loadProblem,
   PROBLEM_FILE,
   saveProblem,
+  resolveTestPath,
   type ProblemPackage,
 } from '../core/problem/package';
 import type { JudgeOutcome } from '../engineFacade';
@@ -32,6 +34,7 @@ import type { VerdictOutput } from './output';
 import { workspaceRoot } from './workspace';
 import { createNonce, panelHtml } from './panel/html';
 import { collectPanelState, type PanelStandings, type PanelState } from './panel/state';
+import { removePath } from './trash';
 
 /** 活动栏里那个容器的视图 id，与 package.json 的 contributes.views 对应。 */
 export const VIEW_ID = 'verdict.controlPanel';
@@ -300,6 +303,12 @@ export class VerdictControlPanel implements vscode.WebviewViewProvider, vscode.D
         case 'removeTest':
           await this.removeTest(asString(message.testId));
           return;
+        case 'addSample':
+          await this.addSample(asString(message.input), asString(message.answer));
+          return;
+        case 'deleteTest':
+          await this.deleteTest(asString(message.testId), message.withData === true);
+          return;
         case 'moveTest':
           await this.moveTest(asString(message.testId), asStringOrNull(message.subtaskId));
           return;
@@ -457,6 +466,12 @@ export class VerdictControlPanel implements vscode.WebviewViewProvider, vscode.D
       return;
     }
     const relative = kind === 'answer' ? test.answer : test.input;
+    if (relative === null) {
+      // 内联样例没有文件可打开：内容就在 problem.json 里，直接带他去看那一行。
+      this.notify('info', '这个测试点是内联样例：内容就在 problem.json 的 tests 里。');
+      await this.openProblemJson();
+      return;
+    }
     await vscode.window.showTextDocument(
       vscode.Uri.file(path.join(selected.dataDir, relative)),
       { preview: false },
@@ -583,6 +598,80 @@ export class VerdictControlPanel implements vscode.WebviewViewProvider, vscode.D
       pkg.problem = removeTest(pkg.problem, testId);
     });
     this.notify('info', `测试点 ${testId} 已移出登记（文件还在 data/）。`);
+  }
+
+  /**
+   * 粘贴一个样例（0.1.5，CPH 那种用法）。
+   *
+   * 内容直接写进 problem.json 的 tests 里，**不生成 .in / .out 文件**：
+   * 样例是题目的一部分，跟着 problem.json 一起保存、一起被版本管理、一起被导出。
+   */
+  private async addSample(inputText: string, answerText: string): Promise<void> {
+    if (inputText.length === 0 && answerText.length === 0) {
+      this.notify('warn', '样例不能是空的：至少把输入或期望输出粘进来。');
+      return;
+    }
+    let id = '';
+    await this.editProblem((pkg) => {
+      const next = addSampleTest(pkg.problem, inputText, answerText);
+      const added = next.tests[next.tests.length - 1];
+      id = added?.id ?? '';
+      pkg.problem = next;
+    });
+    this.notify('info', `样例 ${id} 已存进 problem.json（没有生成数据文件，默认 0 分）。`);
+  }
+
+  /**
+   * 删除一个测试点。
+   *
+   * 内联样例：只从 problem.json 里去掉（它本来就不占文件）。
+   * 数据文件：确认之后把文件和登记一起删——删文件是回收站，删错了能捞回来。
+   */
+  private async deleteTest(testId: string, withData: boolean): Promise<void> {
+    const selected = this.lastState?.selected ?? null;
+    const test = selected?.tests.find((item) => item.id === testId);
+    if (selected === null || test === undefined) {
+      return;
+    }
+
+    if (test.inline) {
+      // 内联样例：删的就是 problem.json 里那两行文本，粘回来很容易，不用再弹一次确认框
+      // （模态框在批量操作/无头宿主里还会把删除变成「点了没反应」）。
+      await this.editProblem((pkg) => {
+        pkg.problem = removeTest(pkg.problem, testId);
+      });
+      this.notify('info', `样例 ${testId} 已从 problem.json 删除。`);
+      return;
+    }
+    if (!withData) {
+      // 「移出登记」这条老路：只动 problem.json，数据文件留着。
+      await this.removeTest(testId);
+      return;
+    }
+
+    // 确认这一步在面板里做（点一下按钮 → 再点「确认删除」）：模态弹窗会把删除变成
+    // 「在无头环境里点了没反应」，而这里要的是「用户明确点过两次」。
+    const pkg = await loadProblem(selected.rootDir);
+    const target = pkg.problem.tests.find((item) => item.id === testId);
+    if (target === undefined) {
+      return;
+    }
+    const files = Object.values(resolveTestPath(pkg, target)).filter(
+      (item): item is string => item !== null,
+    );
+    const failed: string[] = [];
+    for (const file of files) {
+      if (!(await removePath(file))) {
+        failed.push(file);
+      }
+    }
+    await this.editProblem((pkgNow) => {
+      pkgNow.problem = removeTest(pkgNow.problem, testId);
+    });
+    if (failed.length > 0) {
+      throw new Error(`没能删除：${failed.join('、')}。文件可能被占用或权限不足。`);
+    }
+    this.notify('info', `测试点 ${testId} 的数据文件已删除（登记同时移除）。`);
   }
 
   private async moveTest(testId: string, subtaskId: string | null): Promise<void> {

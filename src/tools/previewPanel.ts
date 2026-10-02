@@ -145,6 +145,8 @@ function sampleTests(): PanelTest[] {
     id,
     input: `data/${id}.in`,
     answer: `data/${id}.out`,
+    // 预览里混一个内联样例，好顺带看看它在面板上长什么样。
+    inline: id === '6',
     points: 10,
     subtask: index < 3 ? '1' : '2',
     verdict,

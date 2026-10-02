@@ -2,7 +2,7 @@
   "name": "verdict-judge",
   "displayName": "Verdict · VSCode 评测系统",
   "description": "在编辑器内完成出题、造数据、评测、重测、榜单与导出的本地评测系统。完全离线、零运行时依赖。",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "YuChenZhong",
   "license": "MIT",
   "icon": "media/icon.png",

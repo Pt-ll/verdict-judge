@@ -41,15 +41,24 @@ export type ComparatorMode = 'default' | 'line' | 'real' | 'spj' | 'interactive'
 export interface TestCase {
   id: string;
   /**
-   * 输入文件路径。
+   * 输入**文件**路径（与 `inputText` 二选一）。
    *
    * 题目包里相对**数据目录**（SPEC §6.3，通常写作 "1.in"；0.1.2 及更早的
    * "data/1.in" 加载时会被归一成同一个意思，见 problem/package.ts 的 normalizeTestPath）；
    * M1 的约定式查找（findTestsBesideSource）里则相对数据目录。
    */
-  input: string;
+  input?: string;
   /** 答案文件路径，基准同 input。 */
-  answer: string;
+  answer?: string;
+  /**
+   * 输入**内容**（0.1.5）：直接写在 `problem.json` 里的小样例，不为它生成 `.in` 文件。
+   *
+   * 判题时按 UTF-8 编码成字节，与读文件走同一条路；导出题目包时跟着 `problem.json` 走，
+   * 删除时也只从 `problem.json` 里去掉——「样例跟着题目走」，不用管文件。
+   */
+  inputText?: string;
+  /** 答案内容，与 inputText 配对。 */
+  answerText?: string;
   /** 该测试点分值；未写时按 1 分计（见 judge/score.ts）。 */
   points?: number;
   /**

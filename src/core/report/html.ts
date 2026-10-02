@@ -178,8 +178,8 @@ function renderProblem(problem: Problem): string {
         `<td>${escapeHtml(test.id)}</td>` +
         `<td>${String(test.points ?? 1)}</td>` +
         `<td class="name">${escapeHtml(test.subtask ?? '—')}</td>` +
-        `<td class="name mono">${escapeHtml(test.input)}</td>` +
-        `<td class="name mono">${escapeHtml(test.answer)}</td>` +
+        `<td class="name mono">${escapeHtml(test.input ?? '（内联样例）')}</td>` +
+        `<td class="name mono">${escapeHtml(test.answer ?? '（内联样例）')}</td>` +
         '</tr>',
     )
     .join('');

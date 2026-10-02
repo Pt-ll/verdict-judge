@@ -6,8 +6,10 @@ import {
   PROBLEM_FILE,
   dataFilePath,
   findProblemRoot,
+  isInlineTest,
   loadProblem,
   normalizeTestPath,
+  readTestData,
   resolveTestPath,
   saveProblem,
   sharedDataDir,
@@ -138,6 +140,80 @@ describe('loadProblem', () => {
 });
 
 describe('测试数据总库（.verdict/data/<题目 id>）', () => {
+  it('内联样例：内容写在 problem.json 里，没有数据文件也能读出字节', async () => {
+    const dir = makePackage({
+      [PROBLEM_FILE]: problemJson({
+        id: 'A',
+        tests: [
+          { id: 'sample-1', inputText: '1 2\n', answerText: '3\n', points: 0 },
+          { id: '1', input: '1.in', answer: '1.out' },
+        ],
+      }),
+      'data/1.in': '4 5\n',
+      'data/1.out': '9\n',
+    });
+
+    const pkg = await loadProblem(dir);
+    const [inline, fileBacked] = pkg.problem.tests;
+
+    expect(inline !== undefined && isInlineTest(inline)).toBe(true);
+    expect(fileBacked !== undefined && isInlineTest(fileBacked)).toBe(false);
+    // 内联样例没有路径，也不该去找文件。
+    expect(inline !== undefined && resolveTestPath(pkg, inline)).toEqual({
+      inputPath: null,
+      answerPath: null,
+    });
+    const data = inline === undefined ? null : await readTestData(pkg, inline);
+    expect(data !== null && 'error' in data ? null : data?.input.toString()).toBe('1 2\n');
+    expect(data !== null && 'error' in data ? null : data?.answer.toString()).toBe('3\n');
+    // 文件形式照旧。
+    const fromFile = fileBacked === undefined ? null : await readTestData(pkg, fileBacked);
+    expect(fromFile !== null && 'error' in fromFile ? null : fromFile?.input.toString()).toBe('4 5\n');
+  });
+
+  it('输入与答案各自二选一：同时给或都不给都会当场报错', async () => {
+    const dir = makePackage({
+      [PROBLEM_FILE]: problemJson({
+        id: 'A',
+        tests: [
+          { id: 'both', input: '1.in', inputText: '1 2\n', answerText: '3\n' },
+          { id: 'neither', answerText: '3\n' },
+        ],
+      }),
+    });
+
+    const message = await loadProblem(dir).then(
+      () => '',
+      (err: unknown) => (err instanceof Error ? err.message : String(err)),
+    );
+
+    expect(message).toContain('同时写了 input 与 inputText');
+    expect(message).toContain('缺少 input（数据文件名）或 inputText（内联样例内容）');
+  });
+
+  it('内联样例存回去还是内联样例（不生成也不引用任何文件）', async () => {
+    const dir = makePackage({
+      [PROBLEM_FILE]: problemJson({
+        id: 'A',
+        tests: [{ id: 'sample-1', inputText: '', answerText: '3\n', points: 0 }],
+      }),
+    });
+
+    const pkg = await loadProblem(dir);
+    await saveProblem(pkg);
+
+    const reloaded = await loadProblem(dir);
+    expect(reloaded.problem.tests[0]).toMatchObject({
+      id: 'sample-1',
+      inputText: '',
+      answerText: '3\n',
+      points: 0,
+    });
+    // 空的输入也是合法的（「没有输入」的题），不会被当成「没写」。
+    const data = await readTestData(reloaded, reloaded.problem.tests[0]!);
+    expect('error' in data ? null : data.input.length).toBe(0);
+  });
+
   /** 造一个工作区：题目包在 .verdict/problems/A，数据按 files 放到指定位置。 */
   function makeVerdictWorkspace(files: Record<string, string>): string {
     const root = path.join(workDir, `verdict-${packageCounter++}`);

@@ -23,6 +23,7 @@ import {
 } from '../core/problem/package';
 import type { CaseDocumentStore } from './caseDocs';
 import type { VerdictOutput } from './output';
+import { removePath } from './trash';
 import { activeProblemRoot, discoverProblemRoots, workspaceRoot } from './workspace';
 
 export const COMMAND_ADD_TESTS = 'verdict.addTests';
@@ -607,23 +608,6 @@ async function dropFromContests(
   }
 }
 
-/** 删除文件或目录：优先移进回收站，回收站不可用（某些远程文件系统）时退回直接删除。 */
-async function removePath(target: string): Promise<boolean> {
-  try {
-    await vscode.workspace.fs.delete(vscode.Uri.file(target), {
-      recursive: true,
-      useTrash: true,
-    });
-    return true;
-  } catch {
-    try {
-      await fs.promises.rm(target, { recursive: true, force: true });
-      return !(await exists(target));
-    } catch {
-      return false;
-    }
-  }
-}
 
 /** 按 id 找一个题目包；找不到时给一句人话，而不是让 loadProblem 抛路径错误。 */
 async function loadById(problemId: string): Promise<ProblemPackage | null> {

@@ -4,8 +4,8 @@
 
 **完全离线 · 零运行时依赖 · Windows / macOS / Linux 一致。**
 
-更新日志见 [CHANGELOG.md](CHANGELOG.md)（0.1.4 去掉 Testing 面板 + 每场比赛挑选手 + 成绩单点击跳转；
-0.1.3 是数据总库与多场比赛）。
+更新日志见 [CHANGELOG.md](CHANGELOG.md)（0.1.5 粘贴样例 + 删数据；0.1.4 去掉 Testing 面板 +
+每场比赛挑选手 + 成绩单点击跳转）。
 
 完整的使用说明（安装、面板、出题流程、比赛与榜单、命令与设置、常见问题）见
 [Wiki](https://github.com/Pt-ll/verdict-judge/wiki/插件使用说明)。
@@ -16,6 +16,8 @@
 - **评测当前文件**：源码顶部有 `▶ 评测`；判定进状态栏与输出通道，编译错误进问题面板（可点击跳转到行列）。
 - **题目包**：一个 `problem.json` 描述限制、比较方式、测试点与子任务；子任务支持依赖与 min / sum 计分，依赖没满分时后继子任务记为「跳过」而不是 0 分。
 - **数据总库**：所有测试数据放在 `.verdict/data/<题目 id>/`，用文件夹名区分题目；题目包与数据分开，多场比赛可以共用同一道题的数据。
+- **粘贴样例**：面板上「＋ 粘贴样例」把题面里的输入/输出直接收进 `problem.json`，不生成 `.in` / `.out` 文件，点一下就能跑（默认不计分）。
+- **删数据**：测试点可以「删除数据文件」（进系统回收站，同时取消登记），内联样例则只从 `problem.json` 里去掉。
 - **多场比赛**：一个工作区放几场比赛都行（`.verdict/contests/<id>.json`），题目可以重叠，各场的分数与重测次数互不干扰。
 - **选手池**：`players/` 下的目录（或 `.verdict/players.json` 里的声明）构成池子，**每场比赛自己挑谁参加**——和挑题目一样，互不影响。面板上「＋ 新建选手」会连目录一起建好。
 - **比赛**：选手 × 题目整场评测、重测（受上限约束）、榜单、导出**离线可开**的自包含 HTML 成绩单（含逐题逐测试点详情，点一下就能跳转）。
@@ -32,7 +34,7 @@
 | 页签 | 能做什么 |
 | --- | --- |
 | **题目** | 顶部下拉框切换 / 新建比赛；题目列表上 `★` 表示在当前比赛里，`＋` / `−` 把题目加入或移出当前比赛，`🗑` 删题（可选只删题目包或连数据一起删）；新建 / 导入 / 导出题目包；改选中题目的限制与比较方式（`default` / `line` / `real` / `spj` / `interactive`，checker 与 interactor 用文件选择器指定） |
-| **测试点** | 按子任务分组，每行给最近一次判定、用时与内存；`▶` 单点运行、`🐞` 调试、`⇄` 看 diff、`▸` 展开输入 / 标准答案 / 实际输出；增删子任务、改分值 / 依赖 / 计分、按点均分；扫描数据目录登记新测试点（面板上直接写着数据在哪） |
+| **测试点** | 按子任务分组，每行给最近一次判定、用时与内存；`▶` 单点运行、`🐞` 调试、`⇄` 看 diff、`▸` 展开输入 / 标准答案 / 实际输出；`＋ 粘贴样例` 把题面样例直接存进 `problem.json`（不生成文件），展开后可「删除数据文件」（进回收站）或「删除样例」；增删子任务、改分值 / 依赖 / 计分、按点均分；扫描数据目录登记新测试点 |
 | **榜单** | 选手 × 题目矩阵（选手 = 这场比赛名单里的人），点单元格看重测详情；评测全部、导出 HTML、打开完整榜单 |
 
 顶部一行是当前题目、当前源码与 `▶ 评测` / `🐞 调试` / `■ 取消`，底部一行显示进度与最近一次结果。
@@ -48,18 +50,19 @@
 
 | 从哪里装 | 怎么做 |
 | --- | --- |
+| VS Code 官方市场 | 扩展面板里搜 `Verdict`（`YuChenZhong.verdict-judge`） |
 | VSCodium / Gitpod / Theia 等 Open VSX 源 | 扩展面板里搜 `Verdict` |
 | 任何编辑器（手动） | 从 [Open VSX 页面](https://open-vsx.org/extension/YuChenZhong/verdict-judge) 下 VSIX，再 `code --install-extension <文件>` |
 | 本仓库的开发版 | `pnpm package` 之后装 `dist/verdict-<版本>.vsix` |
 
-Open VSX 上现为 0.0.1；**VS Code 官方市场还没发布**（卡在微软 Azure DevOps 的鉴权上，
-绕法记在 `PUBLISHING.md`）。两边用的是同一个 VSIX，官方市场补发时不用重新打包。
+两个市场用的是同一个 VSIX，目前都发到 **0.1.4**（官方市场当年卡在 Azure DevOps 的鉴权上，
+后来用「网页直接上传 VSIX」绕过，经过记在 `PUBLISHING.md`）。
 
 本仓库内打包与安装：
 
 ```bash
-pnpm package                                                     # 生成 dist/verdict-judge-0.1.3.vsix
-code --install-extension dist/verdict-judge-0.1.3.vsix           # 安装
+pnpm package                                                     # 生成 dist/verdict-judge-<版本>.vsix
+code --install-extension dist/verdict-judge-0.1.5.vsix           # 安装（文件名里的版本号跟着 package.json 走）
 ```
 
 > macOS 上如果提示 `command not found: code`：VS Code 里按 `Cmd+Shift+P`，执行
@@ -84,7 +87,7 @@ code --install-extension dist/verdict-judge-0.1.3.vsix           # 安装
 1. 侧边栏「题目」页签里点 `＋ 新建比赛` → 填比赛 id、标题、重测上限、选手
 2. 点 `＋ 新建题目` → 填题目 id、时限、内存（数据目录会自动建成 `.verdict/data/<题目 id>/`）
 3. 把 `1.in` / `1.out`（可以有很多组）放进那个数据目录
-4. 回到「测试点」页签点 **扫描新测试点**，再用 **＋ 子任务** 或 **按点均分** 分档
+4. 回到「测试点」页签点 **扫描新测试点**；题面里的样例可以直接用 **＋ 粘贴样例** 粘进来（不生成文件），再用 **＋ 子任务** 或 **按点均分** 分档
 5. 选手：在「题目」页签的选手卡片里点 **＋ 新建选手**（会建好 `players/<名字>/`），把 `<题目>.cpp` 放进去；池子里已有的人用 `＋` / `−` 决定参不参加这场，然后回到「榜单」页签点 **评测全部**
 
 想再办一场？顶部下拉框旁边的 `＋` 就是新建第二场比赛；题目库是共用的，用题目行上的 `＋`
@@ -134,13 +137,17 @@ code --install-extension dist/verdict-judge-0.1.3.vsix           # 安装
   ],
   "tests": [
     { "id": "1", "input": "1.in", "answer": "1.out", "points": 30, "subtask": "1" },
-    { "id": "2", "input": "2.in", "answer": "2.out", "points": 70, "subtask": "2" }
+    { "id": "2", "input": "2.in", "answer": "2.out", "points": 70, "subtask": "2" },
+    // 内联样例：内容直接写在这里，没有对应的数据文件
+    { "id": "sample-1", "inputText": "1 2\n", "answerText": "3\n", "points": 0 }
   ]
 }
 ```
 
 测试点路径相对**数据目录**（上面这套布局里就是 `.verdict/data/A/`）。数据想放别处就写
 `"dataDir": "../../shared/A"`（相对题目包根目录）；0.1.2 写的 `"data/1.in"` 也照读。
+测试点可以只有 `inputText` / `answerText`（内联样例），也可以只有 `input` / `answer`（数据文件），
+但同一侧不能两者都写——两个都写会在加载时报错。
 
 比较方式有五种：`default`（忽略行尾空白）、`line`（按行，报告首个不同行）、
 `real`（实数，绝对 + 相对误差）、`spj`（testlib checker）、`interactive`（testlib interactor）。

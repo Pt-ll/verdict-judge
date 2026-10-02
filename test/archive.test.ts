@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { compile, detectToolchain, type Toolchain } from '../src/core/compiler';
 import { exportProblemPackage, importProblemPackage } from '../src/core/problem/archive';
 import { loadProblem, resolveTestPath } from '../src/core/problem/package';
-import { createZip } from '../src/core/zip';
+import { createZip, extractZip } from '../src/core/zip';
 import { judgeProblem } from '../src/core/judge/judge';
 import { createSandbox } from '../src/core/sandbox/sandbox';
 
@@ -64,6 +64,41 @@ const SUM = [
 ].join('\n');
 
 describe('题目包导出与导入', () => {
+  it('数据在总库里时，导出会把数据一起收进包内的 data/', async () => {
+    // 0.1.3 起数据搬到 .verdict/data/<id>：这个包自己不带 data/，导出必须去总库拿。
+    const root = path.join(workDir, `ws-${counter++}`);
+    const packageDir = path.join(root, '.verdict', 'problems', 'A');
+    const dataDir = path.join(root, '.verdict', 'data', 'A');
+    fs.mkdirSync(packageDir, { recursive: true });
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(packageDir, 'problem.json'),
+      JSON.stringify({
+        id: 'A',
+        tests: [{ id: '1', input: '1.in', answer: '1.out', points: 100 }],
+      }),
+    );
+    fs.writeFileSync(path.join(dataDir, '1.in'), '1 2\n');
+    fs.writeFileSync(path.join(dataDir, '1.out'), '3\n');
+
+    const pkg = await loadProblem(packageDir);
+    const zipPath = path.join(workDir, `shared-${counter++}.zip`);
+    const result = await exportProblemPackage(pkg, zipPath);
+
+    const names = extractZip(fs.readFileSync(zipPath)).map((entry) => entry.name);
+    expect(names).toContain('problem.json');
+    expect(names).toContain('data/1.in');
+    expect(names).toContain('data/1.out');
+    expect(result.entries).toBeGreaterThanOrEqual(3);
+
+    // 导出的包在别处解开之后，数据在包内，照样能评测。
+    const dest = path.join(workDir, `imported-${counter++}`);
+    fs.mkdirSync(dest, { recursive: true });
+    const imported = await importProblemPackage(zipPath, dest);
+    expect(imported.package.dataDir).toBe(path.join(imported.rootDir, 'data'));
+    expect(fs.readFileSync(path.join(imported.rootDir, 'data', '1.in'), 'utf8')).toBe('1 2\n');
+  });
+
   it('导出的包导入到新工作区后能直接评测（M4 验收）', async () => {
     const source = makeSimpleProblem();
     const zipPath = path.join(workDir, 'A.zip');

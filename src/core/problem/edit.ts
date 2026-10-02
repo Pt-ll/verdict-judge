@@ -337,6 +337,38 @@ export function removeTest(problem: Problem, testId: string): Problem {
   };
 }
 
+/**
+ * 下一个可用的内联样例行号：`sample-1`、`sample-2`…
+ *
+ * 与数据文件（`1.in` / `2.in`）用不同的前缀，一看就知道它是写在 problem.json 里的样例，
+ * 而不是磁盘上的数据文件。
+ */
+export function nextSampleId(problem: Problem): string {
+  for (let index = 1; ; index += 1) {
+    const id = `sample-${index}`;
+    if (!problem.tests.some((test) => test.id === id)) {
+      return id;
+    }
+  }
+}
+
+/**
+ * 加一个内联样例（0.1.5）：输入与答案的内容直接进 `problem.json`，**不生成任何数据文件**。
+ *
+ * 默认 0 分：样例是「跑一下看对不对」用的，不该把整题满分撑大。想让它算分，
+ * 事后在 problem.json 里给它写 `points` 即可（那时它和别的测试点没有区别）。
+ * 也不属于任何子任务——加进来就是给人点一下 ▶ 的。
+ */
+export function addSampleTest(problem: Problem, inputText: string, answerText: string): Problem {
+  const test: TestCase = {
+    id: nextSampleId(problem),
+    inputText,
+    answerText,
+    points: 0,
+  };
+  return { ...problem, tests: [...problem.tests, test] };
+}
+
 /** 把子任务挂上去，同时把那个测试点的 subtask 字段写成一致的值。 */
 function withSubtask(problem: Problem, subtask: Subtask, testId: string | undefined): Problem {
   const tests = problem.tests.map((test) =>

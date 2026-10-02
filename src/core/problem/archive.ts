@@ -23,6 +23,17 @@ export async function exportProblemPackage(
   zipPath: string,
 ): Promise<ExportedArchive> {
   const entries = await collectEntries(pkg.rootDir, '');
+  // 数据在总库（.verdict/data/<id>）里时，包内没有 data/ —— 导出必须把它收进来，
+  // 并且按约定的包内布局摆在 data/ 下。否则别人拿到这个 ZIP 只有 problem.json，
+  // 一条测试数据都没有（0.1.3 起数据搬出题目包之后就一直有这个问题）。
+  const localData = path.join(pkg.rootDir, 'data');
+  if (path.resolve(pkg.dataDir) !== path.resolve(localData)) {
+    // collectEntries 的 prefix 是「从 rootDir 往下走的相对路径」，所以这里走一遍数据目录，
+    // 再给每个条目挂上包内的 data/ 前缀。
+    const fromLibrary = await collectEntries(pkg.dataDir, '');
+    entries.push(...fromLibrary.map((entry) => ({ ...entry, name: `data/${entry.name}` })));
+  }
+  entries.sort((left, right) => left.name.localeCompare(right.name, 'en'));
   const zip = createZip(entries);
   await fs.promises.mkdir(path.dirname(zipPath), { recursive: true });
   await fs.promises.writeFile(zipPath, zip);

@@ -1,4 +1,3 @@
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { findContestRoot, listContests, loadContest, type ContestRef } from '../../core/contest/contest';
@@ -10,7 +9,7 @@ import type {
   SubtaskResult,
   Verdict,
 } from '../../core/model';
-import { dataFilePath, loadProblem } from '../../core/problem/package';
+import { isInlineTest, loadProblem, readTestData } from '../../core/problem/package';
 import { dataRootOf, problemsDirOf } from '../../core/layout';
 import type { CaseDocumentStore } from '../caseDocs';
 import { activeProblemRoot, discoverProblemRoots, workspaceRoot } from '../workspace';
@@ -18,8 +17,11 @@ import { activeProblemRoot, discoverProblemRoots, workspaceRoot } from '../works
 /** 单个测试点在面板上的样子：登记信息 + 最近一次评测的结论 + 可以展开看的文本。 */
 export interface PanelTest {
   id: string;
-  input: string;
-  answer: string;
+  /** 数据文件名；内联样例为 null（内容在 problem.json 里，见 inline）。 */
+  input: string | null;
+  answer: string | null;
+  /** 内联样例：内容跟着 problem.json 走，没有对应的数据文件。 */
+  inline: boolean;
   points: number;
   subtask: string | null;
   verdict: Verdict | null;
@@ -368,10 +370,20 @@ async function detail(
   const tests: PanelTest[] = [];
   for (const test of pkg.problem.tests) {
     const result = byTest.get(test.id);
+    // 内联样例（0.1.5）的内容就在 problem.json 里，读文件那套对它不适用。
+    const inline = isInlineTest(test);
+    const source = await readTestData(pkg, test);
+    const expectedText =
+      result === undefined
+        ? 'error' in source
+          ? '（读不到测试数据）'
+          : clip(source.answer)
+        : clip(result.answer);
     tests.push({
       id: test.id,
-      input: test.input,
-      answer: test.answer,
+      input: test.input ?? null,
+      answer: test.answer ?? null,
+      inline,
       points: test.points ?? 1,
       subtask: test.subtask ?? null,
       verdict: result?.verdict ?? null,
@@ -379,11 +391,10 @@ async function detail(
       memoryKb: result?.memoryKb ?? null,
       message: result?.message ?? '',
       firstDiffLine: result?.firstDiffLine ?? null,
-      inputText: await clipFile(dataFilePath(pkg, test.input)),
-      expectedText:
-        result === undefined ? await clipFile(dataFilePath(pkg, test.answer)) : clip(result.answer),
+      inputText: 'error' in source ? '（读不到测试数据）' : clip(source.input),
+      expectedText,
       outputText: result === undefined ? '' : clip(result.output),
-      hasData: await exists(dataFilePath(pkg, test.input)),
+      hasData: !('error' in source),
     });
   }
 
@@ -429,21 +440,7 @@ function activeSource(): PanelSource | null {
   };
 }
 
-async function clipFile(target: string): Promise<string> {
-  try {
-    return clip(await fs.promises.readFile(target));
-  } catch {
-    return '';
-  }
-}
 
-async function exists(target: string): Promise<boolean> {
-  try {
-    return (await fs.promises.stat(target)).isFile();
-  } catch {
-    return false;
-  }
-}
 
 function clip(bytes: Buffer): string {
   const text = bytes.toString('utf8').replace(/\r\n?/g, '\n');

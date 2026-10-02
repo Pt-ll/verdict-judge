@@ -4,9 +4,11 @@ import * as path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { DEFAULT_LIMITS, type Problem, type Subtask, type TestCase } from '../src/core/model';
 import {
+  addSampleTest,
   addSubtask,
   clearSubtasks,
   evenSubtasks,
+  nextSampleId,
   nextSubtaskId,
   planAddTests,
   removeSubtask,
@@ -67,6 +69,56 @@ function withSubtasks(problem: Problem, subtasks: Subtask[]): Problem {
     }),
   };
 }
+
+describe('内联样例（0.1.5）', () => {
+  function problemWith(tests: TestCase[]): Problem {
+    return {
+      id: 'A',
+      name: 'A',
+      type: 'traditional',
+      limits: { ...DEFAULT_LIMITS },
+      comparator: { mode: 'default' },
+      subtasks: [],
+      tests,
+    };
+  }
+
+  it('加样例：内容进 tests，默认 0 分，不碰子任务', () => {
+    const before = problemWith([{ id: '1', input: '1.in', answer: '1.out', points: 100 }]);
+
+    const after = addSampleTest(before, '1 2\n', '3\n');
+
+    expect(after.tests).toHaveLength(2);
+    expect(after.tests[1]).toEqual({
+      id: 'sample-1',
+      inputText: '1 2\n',
+      answerText: '3\n',
+      points: 0,
+    });
+    // 样例不属于任何子任务，也不会把已有的测试点挤走（原对象不动）。
+    expect(after.subtasks).toEqual([]);
+    expect(before.tests).toHaveLength(1);
+  });
+
+  it('样例 id 用 sample-N，和数据文件的 1、2 不打架', () => {
+    let problem = problemWith([
+      { id: '1', input: '1.in', answer: '1.out' },
+      { id: 'sample-1', inputText: 'a\n', answerText: 'a\n' },
+    ]);
+
+    expect(nextSampleId(problem)).toBe('sample-2');
+    problem = addSampleTest(problem, 'b\n', 'b\n');
+    expect(problem.tests[2]?.id).toBe('sample-2');
+  });
+
+  it('删样例：从 problem.json 里去掉就行（没有文件要管）', () => {
+    const problem = addSampleTest(problemWith([]), '1\n', '1\n');
+
+    const after = removeTest(problem, 'sample-1');
+
+    expect(after.tests).toEqual([]);
+  });
+});
 
 describe('planAddTests', () => {
   it('只挑没登记过的数据，已登记的原样跳过', async () => {

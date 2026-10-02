@@ -228,6 +228,18 @@ input, select {
   min-width: 0;
 }
 input[type=number] { width: 64px; }
+textarea {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  width: 100%;
+  resize: vertical;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  border-radius: 2px;
+  padding: 3px 4px;
+  margin-bottom: 6px;
+}
 label.field { display: inline-flex; align-items: center; gap: 4px; margin: 2px 8px 2px 0; }
 label.field > span { color: var(--vscode-descriptionForeground); }
 
@@ -251,6 +263,9 @@ const SCRIPT = `
   var limitDraft = null;
   var comparatorDraft = null;
   var subtaskDraft = null;
+  var sampleDraft = null;
+  /** 正在等二次确认的「删除数据文件」：测试点 id。 */
+  var pendingDelete = null;
   var cellDetail = null;
   var busy = null;
   var notice = null;
@@ -706,6 +721,7 @@ const SCRIPT = `
     var wrap = el('div');
     var row = el('div', 'case');
     row.appendChild(el('span', 'cid', '#' + test.id));
+    if (test.inline) { row.appendChild(el('span', 'num', '样例')); }
     row.appendChild(chip(test.verdict));
     row.appendChild(el('span', 'num', fmtTime(test.timeMs)));
     row.appendChild(el('span', 'num', fmtMemory(test.memoryKb)));
@@ -738,9 +754,9 @@ const SCRIPT = `
 
     var box = el('div', 'expand');
     if (test.message) { box.appendChild(el('div', 'hint', test.message)); }
-    box.appendChild(el('h3', null, '输入 · ' + test.input));
+    box.appendChild(el('h3', null, '输入 · ' + (test.input || '（内联样例，存在 problem.json 里）')));
     box.appendChild(pre(test.inputText, '（读不到文件）'));
-    box.appendChild(el('h3', null, '标准答案 · ' + test.answer));
+    box.appendChild(el('h3', null, '标准答案 · ' + (test.answer || '（内联样例，存在 problem.json 里）')));
     box.appendChild(pre(test.expectedText, '（读不到文件）'));
     box.appendChild(el('h3', null, '实际输出'));
     box.appendChild(pre(test.outputText, '（还没跑过这个点）'));
@@ -764,18 +780,48 @@ const SCRIPT = `
       post({ type: 'moveTest', testId: test.id, subtaskId: select.value || null });
     });
     move.appendChild(select);
-    move.appendChild(button('移出登记', '只取消登记，data/ 里的文件不动', function () {
-      post({ type: 'removeTest', testId: test.id });
-    }));
+    if (test.inline) {
+      move.appendChild(button('删除样例', '从 problem.json 里去掉这个样例', function () {
+        post({ type: 'deleteTest', testId: test.id });
+      }));
+    } else {
+      move.appendChild(button('移出登记', '只取消登记，data/ 里的文件不动', function () {
+        post({ type: 'removeTest', testId: test.id });
+      }));
+    }
     var openInput = button('打开输入', null, function () {
       post({ type: 'openCaseFile', testId: test.id, kind: 'input' });
     });
     openInput.disabled = !test.hasData;
     move.appendChild(openInput);
-    move.appendChild(button('打开答案', null, function () {
-      post({ type: 'openCaseFile', testId: test.id, kind: 'answer' });
-    }));
+    if (!test.inline) {
+      move.appendChild(button('打开答案', null, function () {
+        post({ type: 'openCaseFile', testId: test.id, kind: 'answer' });
+      }));
+      move.appendChild(button('删除数据文件', '把 .in / .out 删掉（进回收站）并取消登记', function () {
+        pendingDelete = test.id;
+        render();
+      }));
+    }
     box.appendChild(move);
+
+    // 删数据文件是不可逆动作（虽然进的是回收站），所以在面板里点第二次才真的删。
+    if (pendingDelete === test.id) {
+      var confirm = el('div', 'expand');
+      confirm.appendChild(el('div', 'hint',
+        '删除 ' + test.input + ' 与 ' + test.answer + '？文件会进系统回收站，登记同时移除。'));
+      var confirmRow = el('div', 'row');
+      confirmRow.appendChild(button('确认删除', '删文件并取消登记', function () {
+        pendingDelete = null;
+        post({ type: 'deleteTest', testId: test.id, withData: true });
+      }, 'primary'));
+      confirmRow.appendChild(button('取消', null, function () {
+        pendingDelete = null;
+        render();
+      }));
+      confirm.appendChild(confirmRow);
+      wrap.appendChild(confirm);
+    }
     wrap.appendChild(box);
     return wrap;
   }
@@ -941,16 +987,58 @@ const SCRIPT = `
     tools.appendChild(button('扫描新测试点', '把 data/ 里还没登记的数据加进来', function () {
       post({ type: 'scanTests' });
     }, 'primary'));
+    tools.appendChild(button(sampleDraft ? '取消样例' : '＋ 粘贴样例',
+      '把题面里的样例粘进来：内容直接存进 problem.json，不生成数据文件', function () {
+        sampleDraft = sampleDraft ? null : { input: '', answer: '' };
+        render();
+      }));
     tools.appendChild(button('＋ 子任务', null, function () { post({ type: 'addSubtask' }); }));
     tools.appendChild(button('按点均分', null, function () { post({ type: 'evenSubtasks' }); }));
     tools.appendChild(button('清空子任务', null, function () { post({ type: 'clearSubtasks' }); }));
     box.appendChild(tools);
+
+    if (sampleDraft) {
+      box.appendChild(renderSampleEditor());
+    }
 
     var row2 = el('div', 'row');
     row2.appendChild(button('▶ 评测整题', null, function () { post({ type: 'judge' }); }, 'primary'));
     row2.appendChild(button('打开数据目录', null, function () { post({ type: 'openDataDir' }); }));
     box.appendChild(row2);
     return box;
+  }
+
+  /** 粘贴样例的表单：左边输入、右边期望输出，两个都是纯文本，保存即写进 problem.json。 */
+  function renderSampleEditor() {
+    var card = el('div', 'card');
+    card.appendChild(el('h2', null, '粘贴样例'));
+    card.appendChild(el('div', 'hint',
+      '从题面复制样例即可。内容直接存进 problem.json 的 tests 里（默认 0 分），不会生成 .in / .out 文件。'));
+
+    [['input', '输入（stdin）'], ['answer', '期望输出']].forEach(function (item) {
+      var label = el('div', 'hint', item[1]);
+      card.appendChild(label);
+      var area = document.createElement('textarea');
+      area.rows = 4;
+      area.value = sampleDraft[item[0]];
+      area.addEventListener('input', function () {
+        sampleDraft[item[0]] = area.value;
+      });
+      card.appendChild(area);
+    });
+
+    var actions = el('div', 'row');
+    actions.appendChild(button('保存样例', '写进 problem.json', function () {
+      post({ type: 'addSample', input: sampleDraft.input, answer: sampleDraft.answer });
+      sampleDraft = null;
+      render();
+    }, 'primary'));
+    actions.appendChild(button('取消', null, function () {
+      sampleDraft = null;
+      render();
+    }));
+    card.appendChild(actions);
+    return card;
   }
   function renderStandingsTab() {
     var box = el('div');
