@@ -27,6 +27,9 @@ const COMMANDS = [
   'verdict.newContest',
   'verdict.switchContest',
   'verdict.newProblem',
+  'verdict.addContestantToContest',
+  'verdict.newContestant',
+  'verdict.removeContestantFromContest',
   'verdict.deleteProblem',
   'verdict.addProblemToContest',
   'verdict.removeProblemFromContest',
@@ -88,7 +91,8 @@ async function run() {
   await checkDiff();
   await checkProblemPackage(api, folder.uri);
   await checkControlPanel(api, folder.uri);
-  await checkAutoPlayers(api, folder.uri);
+  await checkContestantPool(api, folder.uri);
+  await checkContestantFolderAutoCreate(api, folder.uri);
   await checkDebug(api, folder.uri);
   await checkContest(api);
 
@@ -127,55 +131,40 @@ async function checkDiff() {
 }
 
 /**
- * 题目包与 Testing 面板（SPEC §4.4 / §12 M2）。
+ * 题目包与子任务计分（SPEC §12 M2）。
  *
- * 树结构和判定都走面板真正的入口（runTestingItems 就是运行按钮调的那段代码），
- * 不另开一条测试专用的捷径，否则测过的和用户用的就是两回事了。
+ * 0.1.4 起不再注册 Testing 面板（活动栏里那个烧瓶图标），所以这里走**面板**真正的入口：
+ * 选题目 → 打开选手源码 → 点「评测整题」。和用户点按钮走的是同一条路。
  */
 async function checkProblemPackage(api, root) {
-  await api.refreshTesting();
-  const problems = api.testingItems();
-  const problem = problems.find((item) => item.label === 'A. 求和');
-  assert.ok(
-    problem,
-    `Testing 树里应当出现题目 A，实际是：${problems.map((item) => item.label).join(' / ') || '（空）'}`,
-  );
-
-  const subtasks = childrenOf(problem);
+  await api.dispatchPanel({ type: 'selectProblem', problemId: 'A' });
+  const selected = api.panelState().selected;
+  assert.ok(selected, '面板里应当能选中题目 A');
   assert.deepEqual(
-    subtasks.map((item) => item.label),
-    ['子任务 1', '子任务 2'],
-    '题目下应当按子任务分组',
+    selected.subtasks.map((item) => item.name),
+    ['小数据', '大数据'],
+    '面板应当按子任务分组显示测试点',
   );
-  assert.deepEqual(childrenOf(subtasks[0]).map((item) => item.label), ['#1']);
-  assert.deepEqual(childrenOf(subtasks[1]).map((item) => item.label), ['#2']);
-  console.log('[verdict] Testing 树：A. 求和 > 子任务 1(#1) / 子任务 2(#2)');
+  assert.deepEqual(selected.tests.map((item) => item.id), ['1', '2']);
+  console.log('[verdict] 题目 A：子任务 小数据(#1) / 大数据(#2)');
 
   await openSource(root, 'players/alice/A.cpp');
-  const full = await api.runTestingItems(subtasks);
-  assert.ok(full !== null, '跑测试应当拿到评测结果');
-  assert.equal(full.kind, 'judged', `期望 judged，实际 ${full.kind}${detailOf(full)}`);
+  await api.dispatchPanel({ type: 'judge' });
+  const full = api.panelState().selected;
   assert.equal(full.score, 100, `正确程序应当满分，实际 ${full.score}/${full.maxScore}`);
-  assert.deepEqual(full.subtasks.map((item) => item.status), ['full', 'full']);
+  assert.deepEqual(full.subtasks.map((item) => item.result.status), ['full', 'full']);
 
   // 只写对一半的程序：小数据过、大数据溢出，应当拿到第 1 个子任务的 30 分。
   await openSource(root, 'players/bob/A.cpp');
-  const partial = await api.runTestingItems(subtasks);
-  assert.ok(partial !== null, '跑测试应当拿到评测结果');
-  assert.equal(partial.kind, 'judged', `期望 judged，实际 ${partial.kind}${detailOf(partial)}`);
+  await api.dispatchPanel({ type: 'judge' });
+  const partial = api.panelState().selected;
   assert.equal(
     partial.score,
     30,
     `溢出程序应当拿 30 分，实际 ${partial.score}/${partial.maxScore}`,
   );
-  assert.deepEqual(partial.subtasks.map((item) => item.status), ['full', 'none']);
+  assert.deepEqual(partial.subtasks.map((item) => item.result.status), ['full', 'none']);
   console.log('[verdict] 题目包评测：正确程序 100/100，溢出程序 30/100（子任务 1 满分、子任务 2 未得分）');
-}
-
-function childrenOf(item) {
-  const items = [];
-  item.children.forEach((child) => items.push(child));
-  return items;
 }
 
 /**
@@ -210,6 +199,13 @@ async function checkControlPanel(api, root) {
   assert.ok(
     state.problems.every((item) => item.inContest),
     'demo 这场比赛的题目都应当标着「在比赛里」',
+  );
+  // 选手池（0.1.4）：池子里有谁、这一场谁上，是两件事。
+  assert.equal(state.contest.contestantsExplicit, true, 'demo 的名单是显式写下来的');
+  assert.deepEqual(
+    state.contest.pool.map((item) => `${item.id}:${item.inContest}`),
+    ['alice:true', 'bob:true'],
+    `demo 的选手池应当是 alice、bob 且都参赛，实际 ${JSON.stringify(state.contest.pool)}`,
   );
 
   await api.dispatchPanel({ type: 'selectProblem', problemId: 'A' });
@@ -320,28 +316,121 @@ async function checkContestPool(api, root) {
 }
 
 /**
- * players/ 自动识别选手（0.1.2）。
+ * 选手池与「每场比赛挑人」（0.1.4）。
  *
- * 用户的要求就是这一条：只把程序放进 players/，不用改 contest.json。
- * 这里临时建一个选手目录，断言它出现在面板名单里且标着 auto，跑完删掉。
+ * 池子是工作区级的：players/ 下放个目录就算一个人，进了池子；
+ * 参不参加某一场由那场比赛的名单决定——demo 写了名单（alice、bob），
+ * 所以新来的 zz-auto 只会出现在池子里，点 ＋ 才进这场比赛。
  */
-async function checkAutoPlayers(api, root) {
+/**
+ * 「第一次加人就把目录建好」（0.1.4）。
+ *
+ * 在选手池里声明一个还没有目录的人，然后只做「加入这场比赛」这一个动作：
+ * `players/<id>/` 应当被他建出来，用户接着把源码丢进去就行。
+ */
+async function checkContestantFolderAutoCreate(api, root) {
+  const playersFile = path.join(root.fsPath, '.verdict', 'players.json');
+  const contestFile = path.join(root.fsPath, '.verdict', 'contests', 'demo.json');
+  const originalContest = fs.readFileSync(contestFile, 'utf8');
+  const hadPlayersFile = fs.existsSync(playersFile);
+  const originalPlayers = hadPlayersFile ? fs.readFileSync(playersFile, 'utf8') : null;
+  const folder = path.join(root.fsPath, 'players', 'zz-newbie');
+
+  try {
+    fs.writeFileSync(
+      playersFile,
+      `${JSON.stringify(
+        {
+          version: 1,
+          contestants: [{ id: 'zz-newbie', name: 'Zz Newbie', folder: 'players/zz-newbie' }],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    await api.dispatchPanel({ type: 'refresh' });
+    assert.ok(!fs.existsSync(folder), '前置条件：这位选手的目录还不存在');
+    assert.ok(
+      api.panelState().contest.pool.some((item) => item.id === 'zz-newbie'),
+      'players.json 里声明的人应当出现在选手池里',
+    );
+
+    await api.dispatchPanel({
+      type: 'command',
+      command: 'verdict.addContestantToContest',
+      arg: 'zz-newbie',
+    });
+
+    assert.ok(
+      fs.existsSync(folder),
+      `加入这位选手时应当自动建出 ${folder}，用户不该自己去建目录`,
+    );
+    await api.dispatchPanel({ type: 'refresh' });
+    assert.ok(
+      api.panelState().contest.contestants.some((item) => item.id === 'zz-newbie'),
+      '建完目录之后他应当已经在这场比赛的名单里',
+    );
+    console.log('[verdict] 第一次加人：自动建好 players/<id>/ 并写进名单');
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+    if (hadPlayersFile && originalPlayers !== null) {
+      fs.writeFileSync(playersFile, originalPlayers);
+    } else {
+      fs.rmSync(playersFile, { force: true });
+    }
+    fs.writeFileSync(contestFile, originalContest);
+    await api.dispatchPanel({ type: 'refresh' });
+  }
+}
+
+async function checkContestantPool(api, root) {
   const dir = path.join(root.fsPath, 'players', 'zz-auto');
+  // 这一步会真的改这场比赛的名单，所以照 checkControlPanel 的做法逐字节还原样例：
+  // testdata 是仓库里给人看的（紧凑写法），不该因为跑一次集成测试就变排版。
+  const contestFile = path.join(root.fsPath, '.verdict', 'contests', 'demo.json');
+  const original = fs.readFileSync(contestFile, 'utf8');
   fs.mkdirSync(dir, { recursive: true });
   fs.copyFileSync(path.join(root.fsPath, 'players', 'alice', 'A.cpp'), path.join(dir, 'A.cpp'));
   try {
     await api.dispatchPanel({ type: 'refresh' });
-    const state = api.panelState();
+    let state = api.panelState();
     assert.ok(state && state.contest, '面板应当读到比赛');
-    const auto = state.contest.contestants.filter((item) => item.auto).map((item) => item.id);
+    const pool = state.contest.pool.find((item) => item.id === 'zz-auto');
+    assert.ok(pool, 'players/ 下的新目录应当进选手池');
     assert.deepEqual(
-      auto,
-      ['zz-auto'],
-      `players/ 下的新目录应当被自动当成选手，实际：${auto.join('、') || '（没有）'}`,
+      { auto: pool.auto, inContest: pool.inContest },
+      { auto: true, inContest: false },
+      'demo 写了名单，所以新人只进池子、不自动参赛',
     );
-    console.log('[verdict] 侧边栏面板：players/ 下的新目录被自动识别成选手');
+
+    await api.dispatchPanel({
+      type: 'command',
+      command: 'verdict.addContestantToContest',
+      arg: 'zz-auto',
+    });
+    await api.dispatchPanel({ type: 'refresh' });
+    state = api.panelState();
+    assert.ok(
+      state.contest.contestants.some((item) => item.id === 'zz-auto'),
+      '点 ＋ 之后这位选手应当参加这场比赛',
+    );
+
+    await api.dispatchPanel({
+      type: 'command',
+      command: 'verdict.removeContestantFromContest',
+      arg: 'zz-auto',
+    });
+    await api.dispatchPanel({ type: 'refresh' });
+    state = api.panelState();
+    assert.ok(
+      state.contest.pool.some((item) => item.id === 'zz-auto') &&
+        !state.contest.contestants.some((item) => item.id === 'zz-auto'),
+      '点 − 之后退出这场比赛，但人还在池子里',
+    );
+    console.log('[verdict] 选手池：新目录进池子，＋ / − 只改这一场的名单');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+    fs.writeFileSync(contestFile, original, 'utf8');
     await api.dispatchPanel({ type: 'refresh' });
   }
 }
@@ -541,6 +630,10 @@ async function checkContest(api) {
     html.includes('<span class="mono">1.in</span>') || html.includes('>1.in<'),
     '测试点清单里应当写清输入文件名',
   );
+  // 点击跳转：表头链到题目节，题目节能点回榜单（0.1.4）。
+  assert.ok(html.includes('id="problem-A"'), '每道题应当有可跳转的锚点');
+  assert.ok(html.includes('class="jump" href="#problem-A"'), '榜单表头应当链到题目节');
+  assert.ok(html.includes('<a href="#standings">↑ 回到榜单</a>'), '题目节应当能点回榜单');
 
   const target = path.join(os.tmpdir(), `verdict-standings-${String(Date.now())}.html`);
   const written = await api.writeStandingsHtml(target);

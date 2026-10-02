@@ -167,6 +167,12 @@ function sampleState(): PanelState {
         { id: 'alice', name: 'Alice', auto: false },
         { id: 'bob', name: 'Bob', auto: true },
       ],
+      pool: [
+        { id: 'alice', name: 'Alice', auto: false, inContest: true },
+        { id: 'bob', name: 'Bob', auto: true, inContest: true },
+        { id: 'carol', name: 'Carol', auto: true, inContest: false },
+      ],
+      contestantsExplicit: true,
       problemIds: ['A'],
       all: [{ id: 'demo', title: '演示赛', legacy: true, active: true }],
       problemsDir: '/w/.verdict/problems',

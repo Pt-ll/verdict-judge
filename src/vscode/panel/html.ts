@@ -533,6 +533,72 @@ const SCRIPT = `
     return card;
   }
 
+  /**
+   * 选手卡片：池子里有哪些人、这一场上不上。
+   *
+   * 和题目一样的心智模型——选手池是工作区级的（players/ 目录与 .verdict/players.json），
+   * 「这场谁上」是每场比赛自己的名单，＋ / − 只改这一场。
+   */
+  function renderContestantsCard() {
+    var card = el('div', 'card');
+    var head = el('div', 'row between');
+    head.appendChild(el('h2', null, '选手'));
+    var headMeta = el('span', 'num',
+      '本场 ' + state.contest.contestants.length + ' 人 · 池子 ' + state.contest.pool.length + ' 人');
+    head.appendChild(headMeta);
+    card.appendChild(head);
+
+    if (state.contest.pool.length === 0) {
+      card.appendChild(el('div', 'hint',
+        '选手池还是空的。新建一位选手就会把 players/ 和他自己的目录建好，接着把源码放进去即可。'));
+      var emptyRow = el('div', 'row');
+      emptyRow.appendChild(button('＋ 新建选手', '建好 players/<名字>/ 并加进这场比赛', function () {
+        post({ type: 'command', command: 'verdict.newContestant' });
+      }, 'primary'));
+      card.appendChild(emptyRow);
+      return card;
+    }
+    if (!state.contest.contestantsExplicit) {
+      card.appendChild(el('div', 'hint',
+        '这场比赛没有写名单，默认池子里所有人都参加；点 − 就变成一份明确的名单。'));
+    }
+
+    state.contest.pool.forEach(function (item) {
+      var row = el('div', 'case');
+      row.appendChild(el('span', item.inContest ? 'cid' : 'cid num', item.name));
+      if (item.name !== item.id) { row.appendChild(el('span', 'num', item.id)); }
+      row.appendChild(el('span', 'grow'));
+      if (item.auto) { row.appendChild(el('span', 'num', '自动发现')); }
+      var tools = el('div', 'tools');
+      if (item.inContest) {
+        tools.appendChild(iconButton('−', '让这位选手退出这场（人还在池子里）', function () {
+          post({
+            type: 'command',
+            command: 'verdict.removeContestantFromContest',
+            arg: item.id
+          });
+        }));
+      } else {
+        tools.appendChild(iconButton('＋', '让这位选手参加这场', function () {
+          post({
+            type: 'command',
+            command: 'verdict.addContestantToContest',
+            arg: item.id
+          });
+        }));
+      }
+      row.appendChild(tools);
+      card.appendChild(row);
+    });
+
+    var tools = el('div', 'row');
+    tools.appendChild(button('＋ 新建选手', '池子里还没有这个人？建一个', function () {
+      post({ type: 'command', command: 'verdict.newContestant' });
+    }));
+    card.appendChild(tools);
+    return card;
+  }
+
   function renderProblemsTab() {
     var box = el('div');
 
@@ -585,6 +651,10 @@ const SCRIPT = `
       contestCard.appendChild(contestRow);
     }
     box.appendChild(contestCard);
+
+    if (state.contest) {
+      box.appendChild(renderContestantsCard());
+    }
 
     var listCard = el('div', 'card');
     listCard.appendChild(el('h2', null, '题目'));

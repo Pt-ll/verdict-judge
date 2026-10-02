@@ -30,6 +30,13 @@ const state: PanelState = {
       // 预览里故意留一个「自动发现」的，好顺带看看那句话长什么样。
       { id: 'bob', name: 'Bob', auto: true },
     ],
+    pool: [
+      { id: 'alice', name: 'Alice', auto: false, inContest: true },
+      { id: 'bob', name: 'Bob', auto: true, inContest: true },
+      // 池子里有、但这场不参加的人：面板上应当显示成可加入的状态。
+      { id: 'carol', name: 'Carol', auto: true, inContest: false },
+    ],
+    contestantsExplicit: true,
     problemIds: ['A', 'B'],
     all: [
       { id: 'internal-2026', title: '内部训练赛 #3', legacy: false, active: true },

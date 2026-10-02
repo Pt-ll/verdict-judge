@@ -81,7 +81,12 @@ export function standingsToHtml(
   const head = [
     '<th class="rank">#</th>',
     '<th class="name">选手</th>',
-    ...contest.problems.map((problem) => `<th>${escapeHtml(problem.id)}</th>`),
+    // 表头链到「题目与测试点」里对应那一节：看一眼分数想追问「这题有哪些点」时点一下就过去。
+    ...contest.problems.map(
+      (problem) =>
+        `<th><a class="jump" href="#${anchorId(problem.id)}" title="跳到这道题的测试点清单">` +
+        `${escapeHtml(problem.id)}</a></th>`,
+    ),
     '<th class="total">总分</th>',
   ].join('');
 
@@ -131,7 +136,15 @@ function renderProblems(contest: Contest): string {
     return '';
   }
   const sections = contest.problems.map((problem) => renderProblem(problem)).join('\n');
-  return ['<h2>题目与测试点</h2>', sections].join('\n');
+  // 目录既是「有哪些题」的概览，也是跳转入口——榜单表头也链到同一批锚点。
+  const nav = [
+    '<p class="meta" id="problems-nav">题目：',
+    contest.problems
+      .map((problem) => `<a href="#${anchorId(problem.id)}">${escapeHtml(problem.id)}</a>`)
+      .join(' · '),
+    '</p>',
+  ].join('');
+  return ['<h2>题目与测试点</h2>', nav, sections].join('\n');
 }
 
 function renderProblem(problem: Problem): string {
@@ -172,7 +185,7 @@ function renderProblem(problem: Problem): string {
     .join('');
 
   return [
-    '<section class="problem">',
+    `<section class="problem" id="${anchorId(problem.id)}">`,
     `<h3>${escapeHtml(problem.id)} · ${escapeHtml(problem.name)}</h3>`,
     `<p class="meta">${escapeHtml(limits)}<br>比较方式：${escapeHtml(comparatorText(problem))}` +
       `${problem.type === 'interactive' && problem.comparator.mode !== 'interactive' ? ' · 交互题' : ''}</p>`,
@@ -196,8 +209,14 @@ function renderProblem(problem: Problem): string {
           testRows,
           '</tbody></table>',
         ].join(''),
+    '<p class="meta"><a href="#standings">↑ 回到榜单</a></p>',
     '</section>',
   ].join('\n');
+}
+
+/** 锚点 id：题目 id 允许字母数字下划线短横线，其余字符换掉，免得生成不合法的 id。 */
+function anchorId(problemId: string): string {
+  return `problem-${problemId.replace(/[^A-Za-z0-9_-]/g, '_')}`;
 }
 
 /** 比较方式说人话，和侧边栏面板上的措辞保持一致。 */
@@ -330,6 +349,10 @@ td.name, th.name { text-align: left; }
 td.cell { min-width: 72px; }
 td.cell[data-cell] { cursor: pointer; }
 td.cell[data-cell]:hover { outline: 2px solid #1f6feb; outline-offset: -2px; }
+td.cell.active { outline: 2px solid #1f6feb; outline-offset: -2px; }
+.jump { color: inherit; text-decoration: none; }
+.jump:hover { text-decoration: underline; }
+#problems-nav a { color: #1f6feb; }
 .score { font-weight: 600; }
 .max { font-weight: 400; opacity: 0.75; font-size: 12px; }
 .verdict { display: block; font-size: 11px; opacity: 0.85; }
@@ -356,6 +379,8 @@ const SCRIPT = `
   JSON.parse(source.textContent || '[]').forEach(function (item) {
     byCell[item.key] = item;
   });
+
+  var activeCell = null;
 
   function text(value) { return String(value == null ? '' : value); }
 
@@ -455,7 +480,14 @@ const SCRIPT = `
     var cell = event.target.closest('td[data-cell]');
     if (!cell) { return; }
     var detail = byCell[cell.getAttribute('data-cell')];
-    if (detail) { render(detail); }
+    if (!detail) { return; }
+    render(detail);
+    // 点过的格子留个记号，滚回来时知道刚才看的是哪一格。
+    if (activeCell) { activeCell.className = 'cell'; }
+    cell.className = 'cell active';
+    activeCell = cell;
+    // 详情画在页面下方：不滚过去的话，点了像没反应——这就是「点击跳转」。
+    if (panel.scrollIntoView) { panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   });
 })();
 `;

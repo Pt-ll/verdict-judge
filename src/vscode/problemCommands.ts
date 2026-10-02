@@ -38,8 +38,8 @@ export const COMMAND_REMOVE_PROBLEM_FROM_CONTEST = 'verdict.removeProblemFromCon
 export interface ProblemCommandDeps {
   output: VerdictOutput;
   caseDocs: CaseDocumentStore;
-  /** 题目包被改动后刷新 Testing 树。 */
-  refreshTests: () => Promise<void>;
+  /** 数据被改动后让侧边栏面板重读一遍磁盘。 */
+  refreshViews: () => Promise<void>;
   /** 当前在用的是哪一场比赛（面板里选的那场）；没有比赛时为 null。 */
   activeContestId: () => string | null;
 }
@@ -323,7 +323,7 @@ async function requirePackage(): Promise<ProblemPackage> {
 }
 
 async function afterChange(deps: ProblemCommandDeps, message: string): Promise<void> {
-  await deps.refreshTests();
+  await deps.refreshViews();
   deps.output.info(message);
   void vscode.window.showInformationMessage(`Verdict：${message}`);
 }
@@ -378,7 +378,7 @@ async function importProblem(deps: ProblemCommandDeps): Promise<void> {
   const problem = (await loadProblem(imported.rootDir)).problem;
 
   await addToContestIfPresent(deps, root, problem);
-  await deps.refreshTests();
+  await deps.refreshViews();
   deps.output.info(
     `已导入题目 ${problem.id}：${imported.rootDir}` +
       (relocated === null ? '' : `（数据已放进总库：${relocated}）`),
@@ -468,7 +468,7 @@ async function addToActiveContest(
   const problem = (await loadProblem(problemDirOf(root, target))).problem;
   pkg.contest = addProblemToContest(pkg.contest, problem);
   await saveContest(pkg);
-  await deps.refreshTests();
+  await deps.refreshViews();
   deps.output.info(`已把题目 ${target} 加入比赛「${pkg.contest.title}」`);
   void vscode.window.showInformationMessage(
     `Verdict：题目 ${target} 已加入比赛「${pkg.contest.title}」。`,
@@ -496,7 +496,7 @@ async function removeFromActiveContest(
   }
   pkg.contest = removeProblemFromContest(pkg.contest, target);
   await saveContest(pkg);
-  await deps.refreshTests();
+  await deps.refreshViews();
   deps.output.info(`已把题目 ${target} 从比赛「${pkg.contest.title}」里移除（题目包与数据都还在）。`);
   void vscode.window.showInformationMessage(
     `Verdict：题目 ${target} 已从比赛「${pkg.contest.title}」移除，题目包与数据保留。`,
@@ -562,7 +562,7 @@ async function deleteProblem(
     failures.push(pkg.rootDir);
   }
 
-  await deps.refreshTests();
+  await deps.refreshViews();
   if (failures.length > 0) {
     throw new Error(`没能删除：${failures.join('、')}。文件可能被占用或权限不足。`);
   }

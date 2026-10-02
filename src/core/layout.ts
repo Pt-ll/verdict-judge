@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 /**
@@ -18,6 +19,10 @@ export const SUBMISSIONS_DIR = 'submissions';
 /** 0.1.2 及更早的单场比赛布局：.verdict/contest.json 与 .verdict/submissions.json。 */
 export const CONTEST_FILE = 'contest.json';
 export const SUBMISSIONS_FILE = 'submissions.json';
+/** 工作区级的选手声明：显示名与源码目录写在这里，比赛文件只列 id。 */
+export const PLAYERS_FILE = 'players.json';
+/** 选手源码目录（工作区根下，不在 .verdict/ 里）。 */
+export const PLAYERS_DIR_NAME = 'players';
 
 export function verdictDirOf(rootDir: string): string {
   return path.join(rootDir, VERDICT_DIR);
@@ -64,4 +69,43 @@ export function submissionsFileOf(rootDir: string, contestId: string): string {
 
 export function legacySubmissionsFileOf(rootDir: string): string {
   return path.join(verdictDirOf(rootDir), SUBMISSIONS_FILE);
+}
+
+export function playersFileOf(rootDir: string): string {
+  return path.join(verdictDirOf(rootDir), PLAYERS_FILE);
+}
+
+/**
+ * 把工作区需要的目录一次建齐（已存在的不动，也不覆盖任何文件）。
+ *
+ * 第一次用这个工作区时（新建比赛、新建题目、加第一个选手……）由调用方叫一次：
+ * 用户不该为了放一个 `A.cpp` 先去资源管理器里手建三层目录。`players/` 也在这里 ——
+ * 它不在 `.verdict/` 下面，但同属「这个工作区长什么样」的一部分。
+ */
+export async function ensureWorkspaceLayout(rootDir: string): Promise<string[]> {
+  const dirs = [
+    verdictDirOf(rootDir),
+    contestsDirOf(rootDir),
+    problemsDirOf(rootDir),
+    dataRootOf(rootDir),
+    submissionsDirOf(rootDir),
+    path.join(rootDir, PLAYERS_DIR_NAME),
+  ];
+  const created: string[] = [];
+  for (const dir of dirs) {
+    if (await isDirectory(dir)) {
+      continue;
+    }
+    await fs.promises.mkdir(dir, { recursive: true });
+    created.push(dir);
+  }
+  return created;
+}
+
+async function isDirectory(target: string): Promise<boolean> {
+  try {
+    return (await fs.promises.stat(target)).isDirectory();
+  } catch {
+    return false;
+  }
 }

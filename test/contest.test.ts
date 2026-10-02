@@ -5,16 +5,22 @@ import { afterAll, describe, expect, it } from 'vitest';
 import {
   CONTEST_FILE,
   VERDICT_DIR,
+  addContestantToContest,
   addProblemToContest,
+  declarePlayers,
+  ensureContestantFolder,
   findContestRoot,
   legacyContestPath,
   listContests,
   loadContest,
   contestPath,
+  removeContestantFromContest,
   removeProblemFromContest,
   saveContest,
   submissionsPath,
 } from '../src/core/contest/contest';
+import type { Contest } from '../src/core/model';
+import { VERDICT_DIR as LAYOUT_VERDICT_DIR, ensureWorkspaceLayout } from '../src/core/layout';
 
 const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verdict-contest-'));
 
@@ -94,9 +100,9 @@ describe('loadContest', () => {
     );
 
     // problems 为空不再算错：刚建出来的比赛就是空的（先建比赛、再加题）。
-    expect(message).toContain('3 处问题');
+    // 0.1.4 起 folder 可以不写（默认 players/<id>），所以这里只剩两处问题。
+    expect(message).toContain('2 处问题');
     expect(message).toContain('maxRejudge 必须是非负数');
-    expect(message).toContain('缺少 folder');
     expect(message).toContain('选手 id "alice" 重复了');
   });
 
@@ -184,7 +190,8 @@ describe('players/ 自动识别选手', () => {
     expect(pkg.contest.id).toBe('fresh');
     expect(pkg.contest.problems).toEqual([]);
     expect(pkg.contest.contestants).toEqual([]);
-    expect(pkg.autoContestants).toEqual([]);
+    expect(pkg.pool).toEqual([]);
+    expect(pkg.contestantsExplicit).toBe(false);
   });
 
   it('players/ 下含源码的目录自动成为选手，空目录与普通文件都不算', async () => {
@@ -201,10 +208,13 @@ describe('players/ 自动识别选手', () => {
     // 数字感知排序：2 排在 10 前面。
     expect(pkg.contest.contestants.map((item) => item.id)).toEqual(['2', '10']);
     expect(pkg.contest.contestants[0]?.folder).toBe('players/2');
-    expect(pkg.autoContestants).toEqual(['2', '10']);
+    expect(pkg.pool.map((item) => item.id)).toEqual(['2', '10']);
+    // 只是目录里躺着、没声明过 → 面板上算「自动发现」。
+    expect(pkg.declaredIds).toEqual([]);
+    expect(pkg.contestantsExplicit).toBe(false);
   });
 
-  it('contest.json 里写过的选手优先，自动发现只补缺的那几个', async () => {
+  it('名单里写过的选手用它的显示名，自动发现的只补缺的那几个', async () => {
     const root = makeWorkspace({
       [path.join(VERDICT_DIR, CONTEST_FILE)]: contestJson({
         id: 'demo',
@@ -217,12 +227,15 @@ describe('players/ 自动识别选手', () => {
 
     const pkg = await loadContest(root);
 
-    expect(pkg.contest.contestants.map((item) => item.id)).toEqual(['alice', 'bob']);
+    // 写了名单就只按名单来：bob 在池子里，但这场不参加（0.1.4 的「每场挑人」）。
+    expect(pkg.contest.contestants.map((item) => item.id)).toEqual(['alice']);
     expect(pkg.contest.contestants[0]?.name).toBe('Alice');
-    expect(pkg.autoContestants).toEqual(['bob']);
+    expect(pkg.pool.map((item) => item.id)).toEqual(['alice', 'bob']);
+    expect(pkg.declaredIds).toEqual(['alice']);
+    expect(pkg.contestantsExplicit).toBe(true);
   });
 
-  it('自动发现的选手不会被写回 contest.json，但下次读还能看见', async () => {
+  it('默认「全上」的比赛不会把自动发现的人写进文件，但下次读还算数', async () => {
     const root = makeWorkspace({
       [path.join(VERDICT_DIR, CONTEST_FILE)]: contestJson({ id: 'demo', problems: [] }),
       'players/carol/A.cpp': 'int main() { return 0; }\n',
@@ -232,12 +245,160 @@ describe('players/ 自动识别选手', () => {
     await saveContest(pkg);
 
     const written = JSON.parse(fs.readFileSync(legacyContestPath(root), 'utf8')) as {
-      contestants: unknown[];
+      contestants?: unknown;
     };
-    expect(written.contestants).toEqual([]);
+    // 字段干脆不写出去：写进去等于把「自动发现」固化成名单，以后放进 players/ 的新人就不自动参赛了。
+    expect(written.contestants).toBeUndefined();
 
     const again = await loadContest(root);
     expect(again.contest.contestants.map((item) => item.id)).toEqual(['carol']);
+  });
+
+  it('players.json 是选手池的声明处：显示名与目录只写一处，比赛文件只列 id', async () => {
+    const root = makeWorkspace({
+      [path.join(VERDICT_DIR, 'players.json')]: contestJson({
+        contestants: [{ id: 'alice', name: 'Alice', folder: 'players/alice' }],
+      }),
+      [path.join(VERDICT_DIR, CONTEST_FILE)]: contestJson({
+        id: 'demo',
+        problems: [],
+        contestants: ['alice', 'bob'],
+      }),
+      'players/alice/A.cpp': 'int main() { return 0; }\n',
+      'players/bob/A.cpp': 'int main() { return 0; }\n',
+      'players/carol/A.cpp': 'int main() { return 0; }\n',
+    });
+
+    const pkg = await loadContest(root);
+
+    // 池子 = players.json 的声明 + players/ 自动发现；只列 id 的名单从池子里取名字。
+    expect(pkg.pool.map((item) => item.id)).toEqual(['alice', 'bob', 'carol']);
+    expect(pkg.declaredIds).toEqual(['alice']);
+    expect(pkg.contest.contestants.map((item) => item.id)).toEqual(['alice', 'bob']);
+    expect(pkg.contest.contestants[0]?.name).toBe('Alice');
+    expect(pkg.contestantsExplicit).toBe(true);
+  });
+
+  it('两场比赛各自挑人：同一批池子，名单互不影响', async () => {
+    const root = makeWorkspace({
+      [path.join(VERDICT_DIR, 'contests', 'spring.json')]: contestJson({
+        id: 'spring',
+        problems: [],
+        contestants: ['alice'],
+      }),
+      [path.join(VERDICT_DIR, 'contests', 'autumn.json')]: contestJson({
+        id: 'autumn',
+        problems: [],
+        contestants: ['alice', 'bob'],
+      }),
+      'players/alice/A.cpp': 'int main() { return 0; }\n',
+      'players/bob/A.cpp': 'int main() { return 0; }\n',
+    });
+
+    const spring = await loadContest(root, 'spring');
+    const autumn = await loadContest(root, 'autumn');
+
+    expect(spring.contest.contestants.map((item) => item.id)).toEqual(['alice']);
+    expect(autumn.contest.contestants.map((item) => item.id)).toEqual(['alice', 'bob']);
+    // 池子是一样的：可选的人和「这场谁上」是两件事。
+    expect(spring.pool.map((item) => item.id)).toEqual(['alice', 'bob']);
+    expect(autumn.pool.map((item) => item.id)).toEqual(['alice', 'bob']);
+  });
+
+  it('显式的名单写回文件时是 id 数组，自定义过名字的保持对象形式', async () => {
+    const root = makeWorkspace({
+      [path.join(VERDICT_DIR, 'players.json')]: contestJson({
+        contestants: [{ id: 'alice', name: 'Alice', folder: 'players/alice' }],
+      }),
+      [path.join(VERDICT_DIR, CONTEST_FILE)]: contestJson({
+        id: 'demo',
+        problems: [],
+        contestants: ['alice', 'bob'],
+      }),
+      'players/alice/A.cpp': 'int main() { return 0; }\n',
+      'players/bob/A.cpp': 'int main() { return 0; }\n',
+    });
+
+    const pkg = await loadContest(root);
+    await saveContest(pkg);
+
+    const written = JSON.parse(fs.readFileSync(legacyContestPath(root), 'utf8')) as {
+      contestants: unknown[];
+    };
+    expect(written.contestants).toEqual([
+      { id: 'alice', name: 'Alice', folder: 'players/alice' },
+      'bob',
+    ]);
+  });
+
+  it('加减参赛选手是纯函数：不动池子，也不动别的比赛', () => {
+    const contest: Contest = {
+      id: 'c',
+      title: 'c',
+      maxRejudge: 0,
+      problems: [],
+      contestants: [],
+    };
+    const alice = { id: 'alice', name: 'Alice', folder: 'players/alice' };
+
+    const added = addContestantToContest(contest, alice);
+    expect(added.contestants.map((item) => item.id)).toEqual(['alice']);
+    expect(addContestantToContest(added, alice).contestants).toHaveLength(1);
+    expect(removeContestantFromContest(added, 'alice').contestants).toEqual([]);
+    expect(contest.contestants).toEqual([]);
+  });
+});
+
+describe('第一次用工作区时把目录建好', () => {
+  it('ensureWorkspaceLayout 一次建齐 .verdict 下的四个目录与 players/', async () => {
+    const root = path.join(workDir, `fresh-${counter++}`);
+    fs.mkdirSync(root, { recursive: true });
+
+    const created = await ensureWorkspaceLayout(root);
+
+    for (const dir of ['contests', 'problems', 'data', 'submissions']) {
+      expect(fs.existsSync(path.join(root, LAYOUT_VERDICT_DIR, dir))).toBe(true);
+    }
+    expect(fs.existsSync(path.join(root, 'players'))).toBe(true);
+    expect(created.length).toBeGreaterThanOrEqual(5);
+
+    // 再叫一次不会重复报「新建」，也不会碰任何已有内容。
+    fs.writeFileSync(path.join(root, 'players', 'keep.txt'), '别动我\n');
+    expect(await ensureWorkspaceLayout(root)).toEqual([]);
+    expect(fs.readFileSync(path.join(root, 'players', 'keep.txt'), 'utf8')).toBe('别动我\n');
+  });
+
+  it('加选手时把 players/<id>/ 建出来；写声明不会覆盖已有的人', async () => {
+    const root = path.join(workDir, `declare-${counter++}`);
+    fs.mkdirSync(root, { recursive: true });
+
+    const alice = { id: 'alice', name: 'Alice', folder: 'players/alice' };
+    const folder = await ensureContestantFolder(root, alice);
+    expect(folder).toBe(path.join(root, 'players', 'alice'));
+    expect(fs.existsSync(folder)).toBe(true);
+
+    await declarePlayers(root, [alice]);
+    await declarePlayers(root, [{ id: 'bob', name: 'Bob', folder: 'players/bob' }]);
+
+    const declared = JSON.parse(
+      fs.readFileSync(path.join(root, LAYOUT_VERDICT_DIR, 'players.json'), 'utf8'),
+    ) as { contestants: { id: string }[] };
+    expect(declared.contestants.map((item) => item.id)).toEqual(['alice', 'bob']);
+
+    // 同一个 id 再声明一次是覆盖，不是追加。
+    await declarePlayers(root, [{ id: 'alice', name: 'Alice Liddell', folder: 'players/alice' }]);
+    const text = fs.readFileSync(path.join(root, LAYOUT_VERDICT_DIR, 'players.json'), 'utf8');
+    expect((JSON.parse(text) as { contestants: unknown[] }).contestants).toHaveLength(2);
+    expect(text).toContain('Alice Liddell');
+  });
+
+  it('选手目录写在工作区外面时拒绝创建（配置写错不该往外刨目录）', async () => {
+    const root = path.join(workDir, `outside-${counter++}`);
+    fs.mkdirSync(root, { recursive: true });
+
+    await expect(
+      ensureContestantFolder(root, { id: 'eve', name: 'eve', folder: '../eve' }),
+    ).rejects.toThrow(/不在工作区里/);
   });
 });
 

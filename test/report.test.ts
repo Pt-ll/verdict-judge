@@ -92,8 +92,9 @@ describe('standingsToHtml', () => {
     expect(output).toContain('演示赛');
     expect(output).toContain('Alice');
     expect(output).toContain('Bob');
-    expect(output).toContain('>A</th>');
-    expect(output).toContain('>B</th>');
+    // 表头是可点的跳转链接（0.1.4），点一下滚到这道题的测试点清单。
+    expect(output).toContain('>A</a></th>');
+    expect(output).toContain('>B</a></th>');
   });
 
   it('自包含：没有任何外部资源或网络请求（离线双击就能看）', () => {
@@ -199,10 +200,24 @@ describe('standingsToHtml', () => {
 
     expect(result.cells).toBeGreaterThan(0);
     expect(result.rendered).toBe(result.cells);
+    // 点一下要滚到详情（「点击跳转」），不是默默把内容画在页面底下。
+    expect(result.scrolled).toBeGreaterThan(0);
     // 详情里得有子任务表、逐测试点表，以及 WA 点上的说明。
     expect(result.text).toContain('子任务');
     expect(result.text).toContain('逐测试点');
     expect(result.text).toContain('第 3 行不同');
+  });
+
+  it('表头与题目清单用锚点互相跳转', () => {
+    const output = html();
+
+    // 每道题一节，带稳定 id；表头与目录都链过去。
+    expect(output).toContain('<section class="problem" id="problem-A">');
+    expect(output).toContain('<section class="problem" id="problem-B">');
+    expect(output).toContain('<a class="jump" href="#problem-A"');
+    expect(output).toContain('id="problems-nav"');
+    // 题目节里能点回榜单。
+    expect(output).toContain('<a href="#standings">↑ 回到榜单</a>');
   });
 
   it('选手名字里的 HTML 被转义，不会被当成标签执行', () => {
@@ -242,7 +257,12 @@ describe('reportToMarkdown', () => {
  * 键对不上、或者脚本里的函数名跟变量撞了（`table` 这个名字撞过一次），都是这种表现——
  * 所以这里不看内部实现，只认最终结果：每个带 data-cell 的格子都得画出东西。
  */
-function runReportScript(html: string): { cells: number; rendered: number; text: string } {
+function runReportScript(html: string): {
+  cells: number;
+  rendered: number;
+  scrolled: number;
+  text: string;
+} {
   const embedded =
     /<script type="application\/json" id="verdict-details">([\s\S]*?)<\/script>/.exec(html)?.[1];
   const script = /<script>([\s\S]*?)<\/script>\s*<\/body>/.exec(html)?.[1];
@@ -255,6 +275,8 @@ function runReportScript(html: string): { cells: number; rendered: number; text:
     textContent: string;
     childNodes: StubNode[];
     style: Record<string, string>;
+    scrolled: number;
+    scrollIntoView(): void;
     appendChild(child: StubNode): StubNode;
     removeChild(child: StubNode): void;
   }
@@ -265,6 +287,11 @@ function runReportScript(html: string): { cells: number; rendered: number; text:
       textContent: '',
       childNodes: [],
       style: {},
+      scrolled: 0,
+      // 浏览器里这是原生方法；桩里记一笔，用来断言「点格子会滚到详情」。
+      scrollIntoView() {
+        this.scrolled += 1;
+      },
       appendChild(child) {
         this.childNodes.push(child);
         return child;
@@ -322,7 +349,12 @@ function runReportScript(html: string): { cells: number; rendered: number; text:
       rendered += 1;
     }
   }
-  return { cells: cells.size, rendered, text: JSON.stringify(panel.childNodes) };
+  return {
+    cells: cells.size,
+    rendered,
+    scrolled: panel.scrolled,
+    text: JSON.stringify(panel.childNodes),
+  };
 }
 
 describe('reportToJson', () => {

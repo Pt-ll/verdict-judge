@@ -2,13 +2,17 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import {
+  addContestantToContest,
   PLAYERS_DIR,
   VERDICT_DIR,
   contestPath,
+  declarePlayers,
+  ensureContestantFolder,
   listContests,
   loadContest,
   newContestFile,
   problemDir,
+  removeContestantFromContest,
   saveContest,
   submissionsPath,
   type ContestRef,
@@ -18,9 +22,15 @@ import { loadSubmissions, mergeSubmissions, saveSubmissions } from '../core/cont
 import { canRejudge, computeStandings, summaryStats } from '../core/contest/standings';
 import { PROBLEM_FILE, saveProblem } from '../core/problem/package';
 import { standingsToHtml, type ReportOptions } from '../core/report/html';
-import { DATA_DIR, dataRootOf, problemsDirOf, submissionsDirOf } from '../core/layout';
+import {
+  DATA_DIR,
+  ensureWorkspaceLayout,
+  playersFileOf,
+} from '../core/layout';
+import { toPosixRelative } from '../util/paths';
 import {
   type Contest,
+  type Contestant,
   DEFAULT_LIMITS,
   type ContestStats,
   type Problem,
@@ -37,6 +47,9 @@ import { workspaceRoot } from './workspace';
 export const COMMAND_NEW_CONTEST = 'verdict.newContest';
 export const COMMAND_SWITCH_CONTEST = 'verdict.switchContest';
 export const COMMAND_NEW_PROBLEM = 'verdict.newProblem';
+export const COMMAND_ADD_CONTESTANT = 'verdict.addContestantToContest';
+export const COMMAND_REMOVE_CONTESTANT = 'verdict.removeContestantFromContest';
+export const COMMAND_NEW_CONTESTANT = 'verdict.newContestant';
 export const COMMAND_JUDGE_ALL = 'verdict.judgeAll';
 export const COMMAND_REJUDGE = 'verdict.rejudge';
 export const COMMAND_SHOW_STANDINGS = 'verdict.showStandings';
@@ -378,6 +391,15 @@ export function registerContestCommands(deps: ContestDeps): ContestCommands {
       vscode.commands.registerCommand(COMMAND_NEW_CONTEST, () => createContest(deps, session)),
       vscode.commands.registerCommand(COMMAND_SWITCH_CONTEST, () => switchContest(session)),
       vscode.commands.registerCommand(COMMAND_NEW_PROBLEM, () => createProblem(deps, session)),
+      vscode.commands.registerCommand(COMMAND_ADD_CONTESTANT, (arg?: unknown) =>
+        addContestant(deps, session, asId(arg)),
+      ),
+      vscode.commands.registerCommand(COMMAND_NEW_CONTESTANT, () =>
+        createContestant(deps, session),
+      ),
+      vscode.commands.registerCommand(COMMAND_REMOVE_CONTESTANT, (arg?: unknown) =>
+        removeContestant(deps, session, asId(arg)),
+      ),
       vscode.commands.registerCommand(COMMAND_JUDGE_ALL, () =>
         withProgress('Verdict：评测全部', (token) => session.judgeAll(token)),
       ),
@@ -434,6 +456,162 @@ async function pickAndRejudge(deps: ContestDeps, session: ContestSession): Promi
   } else {
     void vscode.window.showWarningMessage(`Verdict：${result.message}`);
   }
+}
+
+/**
+ * 让一位选手参加当前比赛。
+ *
+ * 选手池是工作区级的（`players/` 目录 + `.verdict/players.json`），比赛只记 id 名单 ——
+ * 和题目一模一样：可选的东西是共用的，「这场谁上」是每场比赛自己的事。
+ */
+async function addContestant(
+  deps: ContestDeps,
+  session: ContestSession,
+  contestantId: string | null,
+): Promise<void> {
+  const pkg = await session.load();
+  if (pkg === null) {
+    void vscode.window.showWarningMessage(
+      'Verdict：这个工作区里还没有比赛。先执行「Verdict: 新建比赛」。',
+    );
+    return;
+  }
+  if (pkg.pool.length === 0) {
+    void vscode.window.showWarningMessage(
+      `Verdict：选手池是空的。把源码放进 ${path.join(pkg.rootDir, PLAYERS_DIR, '<名字>')}，` +
+        `或在 ${playersFileOf(pkg.rootDir)} 里声明选手。`,
+    );
+    return;
+  }
+
+  const inContest = new Set(pkg.contest.contestants.map((item) => item.id));
+  const candidates = pkg.pool.filter((item) => !inContest.has(item.id));
+  // 从面板点进来的带着 id；从命令面板进来的没带，列出还能加的人让他挑。
+  const picked =
+    contestantId === null
+      ? await pickContestant(candidates.length > 0 ? candidates : pkg.pool, '让谁参加这场比赛')
+      : pkg.pool.find((item) => item.id === contestantId);
+  if (picked === undefined) {
+    return;
+  }
+  if (inContest.has(picked.id)) {
+    deps.output.info(`${picked.name} 已经在这场比赛里了。`);
+    return;
+  }
+
+  // 第一次加这个人：把源码目录建出来，他接着就能把 A.cpp 丢进去。
+  const folder = await ensureContestantFolder(pkg.rootDir, picked);
+  pkg.contest = addContestantToContest(pkg.contest, picked);
+  await saveContest(pkg);
+  // 存完重读一遍：名单从「默认全上」变成「显式名单」这件事只有读完才知道。
+  await session.load(true);
+  deps.output.info(
+    `已让 ${picked.name} 参加比赛「${pkg.contest.title}」。源码目录：${folder}`,
+  );
+  void vscode.window.showInformationMessage(
+    `Verdict：${picked.name} 已加入「${pkg.contest.title}」，源码放在 ${folder} 下。`,
+  );
+}
+
+/**
+ * 新建一位选手：建好 `players/<id>/`（第一次连 `players/` 一起建），
+ * 名字和 id 不一样时把声明写进 `.verdict/players.json`，有比赛就顺手让他参加当前这场。
+ *
+ * 这是「选手池还是空的时候」唯一的出路——不然用户得先猜出目录约定、自己去建文件夹。
+ */
+async function createContestant(deps: ContestDeps, session: ContestSession): Promise<void> {
+  const root = workspaceRoot();
+  if (root === undefined) {
+    void vscode.window.showWarningMessage('Verdict：请先打开一个文件夹作为工作区。');
+    return;
+  }
+
+  const id = await askInput('选手 id（也是目录名与源码文件名，例如 alice）', '', (value) =>
+    isIdentifier(value) ? undefined : '只能用字母、数字、下划线或短横线',
+  );
+  if (id === undefined) {
+    return;
+  }
+  const name = ((await askInput('显示名（留空就用 id）', id)) ?? id).trim() || id;
+
+  const contestant: Contestant = {
+    id,
+    name,
+    folder: toPosixRelative(path.join(PLAYERS_DIR, id)),
+  };
+  const folder = await ensureContestantFolder(root, contestant);
+  // 只有自定义了显示名才需要声明；否则 players/ 的目录名已经说明一切。
+  if (name !== id) {
+    await declarePlayers(root, [contestant]);
+  }
+
+  const pkg = await session.load(true);
+  if (pkg !== null && !pkg.contest.contestants.some((item) => item.id === id)) {
+    pkg.contest = addContestantToContest(pkg.contest, contestant);
+    await saveContest(pkg);
+    await session.load(true);
+    deps.output.info(`已把新选手 ${name} 加进比赛「${pkg.contest.title}」。`);
+  }
+
+  deps.output.info(`已新建选手 ${name}（${folder}）。把源码放进去即可。`);
+  void vscode.window.showInformationMessage(
+    `Verdict：已新建选手「${name}」。把 <题目>.cpp 放进 ${folder}。`,
+  );
+}
+
+/** 让一位选手退出当前比赛：人还在池子里，别的比赛也不受影响。 */
+async function removeContestant(
+  deps: ContestDeps,
+  session: ContestSession,
+  contestantId: string | null,
+): Promise<void> {
+  const pkg = await session.load();
+  if (pkg === null) {
+    void vscode.window.showWarningMessage('Verdict：这个工作区里还没有比赛。');
+    return;
+  }
+  if (pkg.contest.contestants.length === 0) {
+    void vscode.window.showWarningMessage('Verdict：这场比赛里还没有选手。');
+    return;
+  }
+
+  const picked =
+    contestantId === null
+      ? await pickContestant(pkg.contest.contestants, '让谁退出这场比赛')
+      : pkg.contest.contestants.find((item) => item.id === contestantId);
+  if (picked === undefined) {
+    return;
+  }
+
+  pkg.contest = removeContestantFromContest(pkg.contest, picked.id);
+  await saveContest(pkg);
+  await session.load(true);
+  deps.output.info(
+    `已让 ${picked.name} 退出比赛「${pkg.contest.title}」（人还在选手池里）。`,
+  );
+  void vscode.window.showInformationMessage(
+    `Verdict：${picked.name} 已退出「${pkg.contest.title}」，选手池与源码都没动。`,
+  );
+}
+
+async function pickContestant(
+  pool: readonly Contestant[],
+  title: string,
+): Promise<Contestant | undefined> {
+  const picked = await vscode.window.showQuickPick(
+    pool.map((item) => ({
+      label: item.name,
+      description: item.name === item.id ? '' : item.id,
+      detail: item.folder,
+      contestant: item,
+    })),
+    { title: `Verdict：${title}` },
+  );
+  return picked?.contestant;
+}
+
+function asId(arg: unknown): string | null {
+  return typeof arg === 'string' && arg.length > 0 ? arg : null;
 }
 
 /** 切比赛：列出现有的几场让用户挑一个，选完面板与榜单都跟着换。 */
@@ -521,13 +699,15 @@ async function createContest(deps: ContestDeps, session: ContestSession): Promis
     file: newContestFile(root, id),
     submissionsFile: submissionsPath(root, id),
     problemDirs: new Map(),
-    // 新比赛还没有选手目录，自动发现要到第一次 loadContest 时才算得出来。
-    autoContestants: [],
+    // 新建时池子还是空的（players/ 要到第一次 loadContest 时才扫），名单是不是显式写的
+    // 取决于用户在新建流程里填没填人：填了就是一份名单，没填就是「池子里全上」。
+    pool: [],
+    contestantsExplicit: contestants.length > 0,
+    declaredIds: contestants.map((item) => item.id),
   });
-  // 三个目录一次备齐：题目配置、测试数据总库、评测记录。
-  for (const dir of [problemsDirOf(root), dataRootOf(root), submissionsDirOf(root)]) {
-    await fs.promises.mkdir(dir, { recursive: true });
-  }
+  // 目录一次备齐：`.verdict/{contests,problems,data,submissions}` 与 `players/`。
+  // 用户第一次用这个工作区时，最不想干的事就是先手工建目录再回来点按钮。
+  await ensureWorkspaceLayout(root);
 
   await session.setActive(id);
 
@@ -575,6 +755,8 @@ async function createProblem(deps: ContestDeps, session: ContestSession): Promis
   }
 
   const memoryMb = Number(memoryText);
+  // 新建题目顺手把工作区布局补全（.verdict/... 与 players/），老工作区少哪个补哪个。
+  await ensureWorkspaceLayout(root);
   // 测试数据统一放进总库（.verdict/data/<题目 id>），多场比赛共用同一道题的数据，
   // 也不用在题目包目录里翻来翻去。
   const dataDir = path.join(root, VERDICT_DIR, DATA_DIR, id);

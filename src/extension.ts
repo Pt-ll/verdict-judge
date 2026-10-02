@@ -13,7 +13,6 @@ import { DiagnosticsPublisher } from './vscode/diagnostics';
 import { VerdictOutput } from './vscode/output';
 import { registerProblemCommands } from './vscode/problemCommands';
 import { VerdictStatusBar } from './vscode/statusBar';
-import { registerTesting } from './vscode/testing';
 import { VerdictControlPanel } from './vscode/controlPanel';
 import type { PanelState } from './vscode/panel/state';
 
@@ -25,12 +24,6 @@ import type { PanelState } from './vscode/panel/state';
  */
 export interface VerdictApi {
   judgeDocument(document: vscode.TextDocument): Promise<JudgeOutcome | null>;
-  /** 重建 Testing 树；Promise 在树建好后 resolve。 */
-  refreshTesting(): Promise<void>;
-  /** Testing 树的顶层项（一个题目一项），只读。 */
-  testingItems(): vscode.TestItem[];
-  /** 按 Testing 面板的语义跑一组测试项，返回这次判定的结果。 */
-  runTestingItems(items: vscode.TestItem[]): Promise<JudgeOutcome | null>;
   /** 用当前文件的某个测试点起调试会话；集成测试用它验证「没装调试扩展」这条路径。 */
   debugFirstCase(problemRoot?: string, testId?: string): Promise<DebugResult>;
   /** M3：评测整场比赛（集成测试用它验收 M3 的榜单与分数）。 */
@@ -62,40 +55,30 @@ export function activate(context: vscode.ExtensionContext): VerdictApi {
   const caseDocs = new CaseDocumentStore();
   caseDocs.register(context);
   const commands = registerCommands({ context, output, status, diagnostics, caseDocs });
-  // 改题目包的命令要刷新 Testing 树，而 Testing 跑测试又要用命令的评测入口——
-  // 用一个小 hooks 对象打破这个环：先占位，两边都装配好之后再填上真正的实现。
-  const hooks: { refreshTests: () => Promise<void>; activeContestId: () => string | null } = {
-    refreshTests: async () => undefined,
+  // 改数据的那几个命令（改题、删题、加减比赛里的题目）要顺带让面板重读一遍磁盘，
+  // 而面板要等命令的评测入口装配好才能建——用一个小 hooks 对象打破这个环：
+  // 先占位，等面板建好之后再填上真正的实现。
+  const hooks: { refreshViews: () => Promise<void>; activeContestId: () => string | null } = {
+    refreshViews: async () => undefined,
     activeContestId: () => null,
   };
   const problemCommands = registerProblemCommands({
     output,
     caseDocs,
-    refreshTests: () => hooks.refreshTests(),
+    refreshViews: () => hooks.refreshViews(),
     activeContestId: () => hooks.activeContestId(),
   });
   const contest = registerContestCommands({ context, output, status });
   hooks.activeContestId = () => contest.session.activeId();
-  const testing = registerTesting({
-    output,
-    judgeInPackage: (document, request) => commands.judgeDocumentInPackage(document, request),
-    debugInPackage: (document, problemRoot, testId) =>
-      startDebug({ context, output }, document, { problemRoot, testId }),
-  });
-  // 侧边栏面板（活动栏里那个图标）与 Testing 面板看的是同一份数据，
-  // 谁改了题目包都要让两边一起刷新。
+  // 活动栏侧边栏面板是唯一的界面（0.1.4 起不再注册 Testing 面板，见 CHANGELOG）。
   const panel = new VerdictControlPanel({
     context,
     output,
     caseDocs,
     commands,
     contest: contest.session,
-    refreshTests: () => hooks.refreshTests(),
   });
-  hooks.refreshTests = async () => {
-    await testing.refresh();
-    await panel.refresh();
-  };
+  hooks.refreshViews = () => panel.refresh();
   const panelDisposables = panel.register();
 
   context.subscriptions.push(
@@ -107,7 +90,6 @@ export function activate(context: vscode.ExtensionContext): VerdictApi {
     ...commands.disposables,
     ...problemCommands,
     ...contest.disposables,
-    ...testing.disposables,
     vscode.languages.registerCodeLensProvider(
       [
         { language: 'cpp', scheme: 'file' },
@@ -122,9 +104,6 @@ export function activate(context: vscode.ExtensionContext): VerdictApi {
 
   return {
     judgeDocument: (document) => commands.judgeDocument(document),
-    refreshTesting: () => testing.refresh(),
-    testingItems: () => testing.roots(),
-    runTestingItems: (items) => testing.run(items),
     debugFirstCase: (problemRoot, testId) => {
       const document = vscode.window.activeTextEditor?.document;
       if (document === undefined) {

@@ -15,7 +15,7 @@
 
 ### 1.1 一句话
 
-Verdict 是一个 VSCode 扩展：把 OI / ICPC 风格的**本地评测系统**做进编辑器——支持传统题、交互题，内置 **testlib Special Judge**，支持测试点与子任务依赖、实数比较、榜单与成绩导出，并让每次评测都成为 VSCode 原生体验（Testing 面板、问题面板、原生 diff、一键调试）。
+Verdict 是一个 VSCode 扩展：把 OI / ICPC 风格的**本地评测系统**做进编辑器——支持传统题、交互题，内置 **testlib Special Judge**，支持测试点与子任务依赖、实数比较、榜单与成绩导出，并让每次评测都成为 VSCode 原生体验（侧边栏面板、问题面板、原生 diff、一键调试）。
 
 ### 1.2 目标
 
@@ -68,8 +68,7 @@ Verdict 是一个 VSCode 扩展：把 OI / ICPC 风格的**本地评测系统**�
 | 工作区目录 | `.verdict/` |
 | 输出通道 / 诊断集合 | `Verdict` / `verdict` |
 | 活动栏容器 / 视图 | `verdict` / `verdict.controlPanel`（侧边栏面板，§4.12） |
-| Testing 控制器 | `verdict` |
-| 仓库目录名 | `verdict` |
+| 仓库目录名 | `verdict-judge`（`verdict` 在市场上被占用） |
 
 ---
 
@@ -83,12 +82,12 @@ Verdict 是一个 VSCode 扩展：把 OI / ICPC 风格的**本地评测系统**�
   4. 「Verdict: 配置子任务」            -> 勾选测试点、设分值、设依赖
   5. 指定 Special Judge / 实数比较      -> 保存到题目配置
   6. 指定选手文件夹                     -> 自动生成选手列表
-  7. 「Verdict: 评测全部」              -> Testing 面板逐题跑，问题面板报 CE
+  7. 「Verdict: 评测全部」              -> 面板逐题跑，问题面板报 CE
   8. 「Verdict: 导出 HTML 成绩」        -> 生成自包含、可离线打开的 HTML
 
 场景 B：选手本地自测
   1. 打开 solve.cpp                     -> 顶部 CodeLens「▶ 评测」「🐞 调试首测点」
-  2. 评测结果回写到 Testing 面板 / 状态栏
+  2. 评测结果回写到侧边栏面板 / 状态栏
   3. WA 时自动打开「我的输出 vs 标准答案」原生 diff，定位首个不同行
   4. 需要手动调试 -> 「🐞 调试」用首个测试点数据起一个调试会话
 
@@ -112,9 +111,10 @@ Verdict 是一个 VSCode 扩展：把 OI / ICPC 风格的**本地评测系统**�
 │                                                                                   │
 │  UI 层 (src/vscode/)                                                              │
 │   ├── commands        命令注册与调度            ├── diagnostics   Problems 面板    │
-│   ├── codelens        文件顶部按钮              ├── testing       Testing 面板     │
-│   ├── tree            活动栏: 比赛/榜单/提交     ├── webview       榜单/分数分布    │
-│   ├── statusBar        评测进度                 ├── virtualDocs   verdict:// 文档   │
+│   ├── problemCommands 题目包/删题命令           ├── controlPanel  侧边栏面板(§4.12) │
+│   ├── codelens        文件顶部按钮              ├── standingsView 榜单/分数分布    │
+│   ├── caseDocs        verdict:// 文档 + diff    ├── testing       （0.1.4 起移除） │
+│   ├── statusBar        评测进度                 ├── panel/        面板 UI 与状态   │
 │   ├── config          读写 .verdict/            ├── debug         生成并启动调试会话│
 │   └── diff            我的输出 vs 标准答案       └── htmlExport    自包含 HTML      │
 │                                    │                                              │
@@ -172,21 +172,28 @@ Verdict 是一个 VSCode 扩展：把 OI / ICPC 风格的**本地评测系统**�
 归入 `DiagnosticCollection('verdict')`：
 - **编译错误**：把编译器输出解析为 `file/line/col/message`，报 `Error`，可点击跳转。
 - **Special Judge / interactor 编译错误**：报到对应文件。
-- 评测判定本身不进问题面板（进 Testing 面板），仅 RE 的栈回溯行（若解析得到）可选报 `Warning`。
+- 评测判定本身不进问题面板（进侧边栏面板与状态栏），仅 RE 的栈回溯行（若解析得到）可选报 `Warning`。
 
-### 4.4 Testing API
+### 4.4 测试点视图（0.1.4 起并入侧边栏面板）
 
-注册 `TestController('verdict')`：
-- 树结构：`比赛 > 题目 > 测试点 / 子任务`。
-- 每个测试点是一个 `TestItem`，`run` 执行评测并回写状态；
-- `debug` profile：用该测试点输入启动调试会话。
-- 失败态在 Testing 侧边栏可见，可单独重跑。
+M2 曾经注册过 `TestController('verdict')`（活动栏里的 Testing 面板，树结构
+「题目 > 子任务 > 测试点」）。**0.1.4 起不再注册**：侧边栏的 Verdict 面板（§4.12）
+已经把「跑哪个点、调哪个点、看哪次 diff、改子任务」全做完了，两个入口并存只会让人
+不知道该点哪一个。去掉之后活动栏少一个图标，评测结果的去向不变。
 
-> 实现进度：树结构、`run` profile 与 `debug` profile 都已落地（`src/vscode/testing.ts`）。
-> M2 的树是「题目 > 子任务 > 测试点」，比赛那一层（§5.7）属于 M3。
-> 调试入口一共有四处：Testing 面板的调试按钮、命令 `verdict.debugCase`、
-> 源码顶部的 CodeLens「🐞 调试首测点」，以及评测失败通知里的「🐞 调试该测试点」
-> （SPEC §4.8 说的「评测失败 → 一键起调试」）。
+替代入口（都在面板里）：
+
+| 想做的事 | 现在点哪 |
+| --- | --- |
+| 跑整题 | 面板顶部 `▶ 评测` |
+| 只跑一个测试点 | 「测试点」页签里那一行的 `▶` |
+| 用某个测试点调试 | 那一行的 `🐞`（等同命令 `verdict.debugCase`） |
+| 看输出与答案的差异 | 那一行的 `⇄`（等同命令 `verdict.showDiff`） |
+| 改子任务分值 / 依赖 / 计分 | 页签里的子任务表头 `✎`（等同 `verdict.configureSubtasks`） |
+
+调试入口仍有四处：面板测试点行的 `🐞`、命令 `verdict.debugCase`、
+源码顶部的 CodeLens「🐞 调试首测点」，以及评测失败通知里的「🐞 调试该测试点」
+（SPEC §4.8 说的「评测失败 → 一键起调试」）。
 
 ### 4.5 原生 diff
 
@@ -266,7 +273,7 @@ WA 时执行 `vscode.commands.executeCommand('vscode.diff', outputUri, answerUri
 
 **为什么要有它**：`problem.json` / `contest.json` 都能手写，但**大多数人不会去写 JSON**。
 命令面板把「创建」图形化了，「看和改」却仍然要打开文件；评测、榜单、重测又散在命令面板、
-Testing 面板与编辑器标签页里。所以补一个常驻面板：**活动栏上一个 Verdict 图标**，
+编辑器标签页里。所以补一个常驻面板：**活动栏上一个 Verdict 图标**，
 点开就是整套操作台——参照 LemonLime 那类本地评测软件的做法，把出题、评测、看结果收进一个界面。
 
 **设计原则：JSON 仍然是唯一的存储格式，面板只是它的一个视图。**
@@ -316,7 +323,7 @@ Testing 面板与编辑器标签页里。所以补一个常驻面板：**活动�
   测试点可以改归属或移出登记（**只取消登记，不动 `data/` 里的文件**）。
 - 「榜单」页签：紧凑的选手 × 题目矩阵，点单元格看详情并重测（受 `maxRejudge` 约束），
   一键「评测全部」、导出 HTML、或打开编辑器里那份完整榜单。
-- 行的状态来自 `CaseDocumentStore`，与 Testing 面板、`verdict.showDiff` 共用同一份结果，
+- 行的状态来自 `CaseDocumentStore`，与 `verdict.showDiff`、虚拟文档共用同一份结果，
   不另算一套；**单点运行只更新那一个点**，不会把别的点的输出清掉。
 
 消息协议（与榜单 WebView 同一套做法，双向）：
@@ -731,6 +738,7 @@ export function splitmix64(seed: bigint): Rng;
 
 ```text
 .verdict/
+├── players.json               # 选手池的声明（可选）：显示名与源码目录
 ├── contests/                  # 每场比赛一个文件，可以放好几场（§6.2）
 │   └── <contestId>.json
 ├── submissions/               # 提交记录，一场一份（运行产物，可选，便于榜单恢复）
@@ -765,10 +773,7 @@ export function splitmix64(seed: bigint): Rng;
   "title": "内部训练赛 #3",
   "maxRejudge": 3,
   "problems": ["A", "B", "C"],
-  "contestants": [
-    { "id": "alice", "name": "Alice", "folder": "players/alice" },
-    { "id": "bob",   "name": "Bob",   "folder": "players/bob" }
-  ]
+  "contestants": ["alice", "bob"]
 }
 ```
 
@@ -783,9 +788,36 @@ id 以文件名为准（文件里的 `id` 字段与文件名不一致会当场�
 「把题目加入 / 移出当前比赛」改的只是这一场的 id 列表（面板上的 `＋` / `−`，
 命令 `verdict.addProblemToContest` / `verdict.removeProblemFromContest`）。
 
-`problems` 可以是空数组——刚建出来的比赛就是这样（先建比赛、再加题）；`contestants` 也可以不写：
-`players/` 下每个**含源码的子目录**会被自动当成一名选手（id 与显示名取目录名，按数字感知排序）。
-显式写过的以显式配置为准；自动发现的选手不会被写回文件。
+**选手也是同一个模型（0.1.4 起）**：可选的人（选手池）与这一场的名单分开。
+
+```jsonc
+// .verdict/players.json —— 选手池的声明处，可选
+{
+  "version": 1,
+  "contestants": [
+    { "id": "alice", "name": "Alice", "folder": "players/alice" }
+  ]
+}
+```
+
+- **池子** = `players/` 下每个**含源码的子目录**（自动发现，id 与显示名取目录名，按数字感知排序）
+  + `.verdict/players.json` 里的声明（可自定义显示名与源码目录）。同一 id 以声明为准。
+- **名单** = 比赛文件里的 `contestants`。写 `["alice","bob"]` 就是只让这两个人参加；
+  **整个字段不写** = 池子里所有人都参加（0.1.2 起的老行为，往 `players/` 里放程序就算）。
+- 两种旧写法继续读：写 id 字符串（推荐）或写 `{id,name,folder}` 对象（0.1.3 及更早，
+  顺便当作池子声明）。写回时，默认的名字与目录写成 id 字符串，自定义过的仍写成对象，不丢信息。
+- 面板「题目」页签里的**选手**卡片就是增删名单的入口：`＋` 参加这场、`−` 退出这场，
+  对应的命令是 `verdict.addContestantToContest` / `verdict.removeContestantFromContest`。
+  移出只影响这一场，人还在池子里，别的比赛不受影响。
+- **第一次用工作区时把目录建好**：新建比赛 / 新建题目会调 `ensureWorkspaceLayout`，
+  一次备齐 `.verdict/{contests,problems,data,submissions}` 与 `players/`；
+  「新建选手」（`verdict.newContestant`）建 `players/<id>/` 并加进当前比赛（自定义显示名时
+  写进 `players.json`）；把池子里的人加进某场比赛时，目录不存在也会先建出来
+  （`ensureContestantFolder`，只允许在工作区内创建）。
+- `folder` 可以省：默认 `players/<id>`。名单里写了一个池子里没有的 id 也没关系——
+  按默认目录去找源码，找不到就是「还没交」（与找不到源码的格子同样的处理）。
+
+`problems` 与 `contestants` 都可以是空数组——刚建出来的比赛就是这样（先建比赛、再加题加人）。
 
 ### 6.3 `problem.json`
 
@@ -996,8 +1028,9 @@ exitCode != 0          -> RE
 - 死循环判 TLE；`abort()` 判 RE；超输出判 OLE；正常判 AC/WA 且时间合理。
 - 编译错误能在问题面板定位到行列。
 
-### M2 — 题目包 + 测试点 + 子任务 + Testing/diff
-交付：`problem` 包读写、`scanTests`、`configureSubtasks`、子任务计分、Testing API、虚拟文档、`vscode.diff`（含首个不同行号）。
+### M2 — 题目包 + 测试点 + 子任务 + 测试点视图/diff
+交付：`problem` 包读写、`scanTests`、`configureSubtasks`、子任务计分、测试点视图、虚拟文档、`vscode.diff`（含首个不同行号）。
+> 当时的测试点视图是 Testing 面板；0.1.4 起并入侧边栏面板（§4.4、M7），验收标准不变。
 验收：
 - 对已知正确/错误程序，判定与分数正确。
 - WA 时自动打开 diff，首个不同行号正确。
@@ -1037,6 +1070,19 @@ exitCode != 0          -> RE
 - 同一道题出现在两场比赛里时，两边的榜单、重测计数、导出互不影响。
 - 删题给的三个选项都只动该动的东西；题目在别的比赛里时先摘干净，不留下加载不出来的比赛。
 - 导出的 HTML 断网可开，且不点任何单元格就能看到每道题的测试点清单。
+
+### M7 — 界面收口 + 每场挑选手 + 成绩单跳转（0.1.4）
+交付：移除 Testing 面板（§4.4）、选手池与每场比赛的名单（§6.2）、
+面板上的选手卡片与 `verdict.addContestantToContest` / `removeContestantFromContest`、
+成绩单的锚点跳转与点击滚动。
+验收：
+- 活动栏不再出现 Testing 图标；跑整题 / 跑单点 / 调试 / 看 diff 全部能在侧边栏面板里完成。
+- 新建一个 `players/<名字>/A.cpp` 只让它进选手池；写进某一场的名单后才参加那一场，
+  其他比赛不受影响；同一道题、同一个人可以同时出现在多场比赛里。
+- 没写 `contestants` 的老比赛仍然是「池子里全上」，自动发现的选手不会被写回文件。
+- 「新建选手」/「加进比赛」之后，`players/<id>/` 一定存在（第一次连 `players/` 一起建），
+  用户不必手工建目录；写在外面的 `folder` 会被拒绝。
+- 导出的成绩单里，点表头能跳到对应题目的测试点清单，点分数格子会滚到并高亮详情。
 
 ---
 
@@ -1105,7 +1151,6 @@ verdict-judge/
 │   │   ├── caseDocs.ts       # verdict:// 虚拟文档 + 原生 diff
 │   │   ├── codelens.ts       # ▶ 评测 / 🐞 调试首测点 / ⚙ 限制
 │   │   ├── diagnostics.ts    # 编译错误进问题面板
-│   │   ├── testing.ts        # Testing 面板：题目 > 子任务 > 测试点
 │   │   ├── standingsView.ts  # 完整榜单 WebView
 │   │   ├── statusBar.ts
 │   │   ├── output.ts
@@ -1486,7 +1531,7 @@ code --install-extension dist/verdict-judge-0.1.3.vsix   # 安装
 ## 参考资料
 
 - 常见 OJ 判定与 Special Judge 调用约定、实数比较的绝对/相对误差处理。
-- VSCode Extension API：命令、CodeLens、Diagnostics、Testing、Webview、TextDocumentContentProvider、Debug、TreeView。
+- VSCode Extension API：命令、CodeLens、Diagnostics、Webview、TextDocumentContentProvider、Debug、TreeView。
 - Node 内置模块：`child_process`、`fs`、`path`、`crypto`、`zlib`。
 
 ---

@@ -106,6 +106,13 @@ export interface PanelState {
     maxRejudge: number;
     /** auto：从 players/ 自动发现（没写进 contest.json）。 */
     contestants: { id: string; name: string; auto: boolean }[];
+    /**
+     * 选手池：工作区里全部可选的人（players/ 目录 + players.json 声明），
+     * `inContest` 表示参不参加**当前这一场**（SPEC §6.2）。
+     */
+    pool: { id: string; name: string; auto: boolean; inContest: boolean }[];
+    /** 参赛名单是显式写下来的，还是默认「池子里全上」。 */
+    contestantsExplicit: boolean;
     problemIds: string[];
     /** 工作区里的全部比赛，供面板顶部切换；至少有一项。 */
     all: { id: string; title: string; legacy: boolean; active: boolean }[];
@@ -225,7 +232,8 @@ async function loadContestSummary(
   const active = refs.find((item) => item.id === activeId) ?? refs[0];
   try {
     const pkg = await loadContest(contestRoot, active?.id);
-    const auto = new Set(pkg.autoContestants);
+    const declared = new Set(pkg.declaredIds);
+    const participating = new Set(pkg.contest.contestants.map((item) => item.id));
     return {
       id: pkg.contest.id,
       title: pkg.contest.title,
@@ -233,8 +241,15 @@ async function loadContestSummary(
       contestants: pkg.contest.contestants.map((item) => ({
         id: item.id,
         name: item.name,
-        auto: auto.has(item.id),
+        auto: !declared.has(item.id),
       })),
+      pool: pkg.pool.map((item) => ({
+        id: item.id,
+        name: item.name,
+        auto: !declared.has(item.id),
+        inContest: participating.has(item.id),
+      })),
+      contestantsExplicit: pkg.contestantsExplicit,
       problemIds: pkg.contest.problems.map((item) => item.id),
       all: await Promise.all(
         refs.map(async (ref) => ({
@@ -256,6 +271,8 @@ async function loadContestSummary(
       title: '比赛配置读不出来',
       maxRejudge: 0,
       contestants: [],
+      pool: [],
+      contestantsExplicit: false,
       problemIds: [],
       all: refs.map((ref) => ({
         id: ref.id,

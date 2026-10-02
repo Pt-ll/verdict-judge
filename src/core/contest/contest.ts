@@ -4,7 +4,7 @@ import type { Contest, Contestant, Problem } from '../model';
 import { loadProblem } from '../problem/package';
 import { SOURCE_EXTENSIONS } from './sources';
 import { isFile } from '../../util/files';
-import { isInside, toPosixRelative } from '../../util/paths';
+import { isInside, toNativeRelative, toPosixRelative } from '../../util/paths';
 import {
   CONTEST_FILE,
   CONTESTS_DIR,
@@ -16,6 +16,7 @@ import {
   contestsDirOf,
   legacyContestFileOf,
   legacySubmissionsFileOf,
+  playersFileOf,
   problemDirOf,
   submissionsFileOf,
   verdictDirOf,
@@ -56,12 +57,28 @@ export interface ContestPackage {
   /** 题目 id -> 题目包根目录（.verdict/problems/<id>）。 */
   problemDirs: Map<string, string>;
   /**
-   * 由 players/ 自动发现、没有写进 contest.json 的选手 id。
+   * 工作区里**全部**可选选手（0.1.4 的「选手池」，SPEC §6.2）。
    *
-   * 记着它只是为了让 saveContest 不把它们写回文件：自动发现是「读的时候顺手算出来」的，
-   * 不该因为改了一道题就把它们变成用户配置的一部分。
+   * 来源三处，按优先级合并（先出现的先用它的 name/folder）：
+   *   1. `.verdict/players.json` 里显式声明的（可自定义显示名与目录）；
+   *   2. 本场比赛文件里旧写法的对象（0.1.3 及更早把声明写在 contestants 里，兼容读）；
+   *   3. `players/` 下含源码的目录（自动发现，放进去就算）。
    */
-  autoContestants: string[];
+  pool: Contestant[];
+  /**
+   * 本场比赛的参赛名单是「显式写下来的」还是「默认全上」。
+   *
+   * 没写 contestants 字段 = 池子里所有人都参加（0.1.2 起的老行为：放进去就算）；
+   * 写了（哪怕是空数组）= 只按这份名单来。这一位决定 saveContest 要不要把这个字段写出去。
+   */
+  contestantsExplicit: boolean;
+  /**
+   * 池子里哪些人是「被声明过的」（写了自定义显示名或目录：players.json 或比赛文件里的对象写法）。
+   *
+   * 其余的就是 players/ 下扫出来的——面板上标成「自动发现」，让人一眼看出哪些是配置、
+   * 哪些只是目录里躺着。
+   */
+  declaredIds: string[];
 }
 
 /** 工作区里的一场比赛：id 与它落在哪个文件上。 */
@@ -203,13 +220,19 @@ async function loadContestRef(resolved: string, ref: ContestRef): Promise<Contes
   // problems 允许为空：刚建出来的比赛就是这样（先建比赛、再加题）。以前这里当成配置错误，
   // 后果是「新建比赛之后整条比赛链路都打不开」——面板空白，新建题目也加不进比赛。
   const problemIds = readStringArray(raw.problems, 'problems', issues);
-  const configured = readContestants(raw.contestants, issues);
+  const listed = readContestants(raw.contestants, issues);
   const { problems, problemDirs } = await loadProblems(resolved, problemIds, issues);
 
-  // players/ 下的目录自动算选手：程序放进去就能出现在榜单与整场评测里，不必手写 contestants。
-  // contest.json 里显式写过的以它为准（可以自定义显示名与目录）。
-  const known = new Set(configured.map((item) => item.id));
-  const discovered = (await scanPlayerFolders(resolved)).filter((item) => !known.has(item.id));
+  // 选手池：players.json 的声明 + 本场比赛旧写法的声明 + players/ 自动发现。
+  const pool = mergeContestants(
+    await loadDeclaredPlayers(resolved),
+    listed.entries,
+    await scanPlayerFolders(resolved),
+  );
+  // 参赛名单：文件里写了就按它来，没写就是池子里全上（0.1.2 的老行为）。
+  const contestants = listed.explicit
+    ? listed.entries.map((item) => withPoolDefaults(pool, item))
+    : pool;
 
   issues.throwIfAny(file);
 
@@ -218,7 +241,7 @@ async function loadContestRef(resolved: string, ref: ContestRef): Promise<Contes
       id,
       title,
       problems,
-      contestants: [...configured, ...discovered],
+      contestants,
       maxRejudge,
       _raw: raw,
     },
@@ -229,20 +252,15 @@ async function loadContestRef(resolved: string, ref: ContestRef): Promise<Contes
       ? legacySubmissionsFileOf(resolved)
       : submissionsFileOf(resolved, id),
     problemDirs,
-    autoContestants: discovered.map((item) => item.id),
+    pool,
+    contestantsExplicit: listed.explicit,
+    declaredIds: pool.filter((item) => isDeclared(item)).map((item) => item.id),
   };
 }
 
 /** 只写这场比赛自己的配置文件：题目包、数据与选手源码都不归它管（SPEC §5.8 的同一条规矩）。 */
 export async function saveContest(pkg: ContestPackage): Promise<void> {
-  // 自动发现的选手不写回文件：它们随时能从 players/ 重新算出来，
-  // 写进去只会让「改了一道题」顺带变成一次选手列表的改动。
-  const auto = new Set(pkg.autoContestants);
-  const contest = {
-    ...pkg.contest,
-    contestants: pkg.contest.contestants.filter((item) => !auto.has(item.id)),
-  };
-  const text = `${JSON.stringify(serializeContest(contest), null, 2)}\n`;
+  const text = `${JSON.stringify(serializeContest(pkg), null, 2)}\n`;
   await fs.promises.mkdir(path.dirname(pkg.file), { recursive: true });
   await fs.promises.writeFile(pkg.file, text, 'utf8');
 }
@@ -266,22 +284,118 @@ export function removeProblemFromContest(contest: Contest, problemId: string): C
   return problems.length === contest.problems.length ? contest : { ...contest, problems };
 }
 
-function readContestants(raw: unknown, issues: ConfigIssues): Contestant[] {
+/** 让一位选手参加这场比赛（名单里已经有他就是原样返回）。 */
+export function addContestantToContest(contest: Contest, contestant: Contestant): Contest {
+  if (contest.contestants.some((item) => item.id === contestant.id)) {
+    return contest;
+  }
+  return { ...contest, contestants: [...contest.contestants, contestant] };
+}
+
+/**
+ * 保证这位选手的源码目录存在（不存在就建出来），返回绝对路径。
+ *
+ * 「第一次加人」时最需要这一步：面板上点完 ＋，用户第一件事就是去找那个文件夹放 `A.cpp`，
+ * 让他自己去资源管理器里建三层目录是说不过去的。只建目录，不生成任何文件——
+ * 选手目录里放什么、叫什么，是他的事。
+ */
+export async function ensureContestantFolder(
+  rootDir: string,
+  contestant: Contestant,
+): Promise<string> {
+  const target = path.resolve(rootDir, toNativeRelative(contestant.folder));
+  // folder 来自配置：只在工作区里面建，别让人写个 ../.. 就往外刨目录。
+  if (!isInside(target, path.resolve(rootDir))) {
+    throw new Error(`选手 ${contestant.id} 的目录不在工作区里：${contestant.folder}`);
+  }
+  await fs.promises.mkdir(target, { recursive: true });
+  return target;
+}
+
+/**
+ * 把几位选手写进工作区级的声明 `.verdict/players.json`（第一次会把这个文件建出来）。
+ *
+ * 只用来记「这个人是谁」：显示名与源码目录。名单（谁参加哪场比赛）仍然在比赛文件里，
+ * 自动发现的选手也不会被写进来——他们的名字和目录本来就是从 `players/` 推出来的。
+ */
+export async function declarePlayers(
+  rootDir: string,
+  additions: readonly Contestant[],
+): Promise<void> {
+  if (additions.length === 0) {
+    return;
+  }
+  const existing = await loadDeclaredPlayers(rootDir).catch(() => []);
+  const byId = new Map(existing.map((item) => [item.id, item]));
+  for (const item of additions) {
+    byId.set(item.id, item);
+  }
+  const file = playersFileOf(rootDir);
+  const text = `${JSON.stringify(
+    { version: 1, contestants: [...byId.values()] },
+    null,
+    2,
+  )}\n`;
+  await fs.promises.mkdir(path.dirname(file), { recursive: true });
+  await fs.promises.writeFile(file, text, 'utf8');
+}
+
+/** 把一位选手移出这场比赛：人还在选手池里，别的比赛不受影响。 */
+export function removeContestantFromContest(contest: Contest, contestantId: string): Contest {
+  const contestants = contest.contestants.filter((item) => item.id !== contestantId);
+  return contestants.length === contest.contestants.length
+    ? contest
+    : { ...contest, contestants };
+}
+
+/** 一名选手的默认源码目录：players/<id>（约定优于配置，写不写都能用）。 */
+function defaultFolder(id: string): string {
+  return toPosixRelative(path.join(PLAYERS_DIR, id));
+}
+
+/** 名字或目录不是默认值 = 这个人是被声明过的（players.json 或比赛文件里的对象写法）。 */
+function isDeclared(item: Contestant): boolean {
+  return item.name !== item.id || item.folder !== defaultFolder(item.id);
+}
+
+interface ContestantList {
+  /** 文件里到底写没写 contestants：没写 = 池子里所有人都参加。 */
+  explicit: boolean;
+  entries: Contestant[];
+}
+
+/**
+ * 读参赛名单。两种写法都认：
+ *   - `["alice", "bob"]`——0.1.4 起推荐，只写 id，显示名与目录按池子里的来；
+ *   - `[{ "id": "alice", "name": "Alice", "folder": "players/alice" }]`——0.1.3 及更早，
+ *     顺便当作「这个人是谁」的声明读进池子（否则老工作区升级后会丢显示名与目录）。
+ */
+function readContestants(raw: unknown, issues: ConfigIssues): ContestantList {
   if (raw === undefined) {
-    // 不写也合法：players/ 下的目录会被自动当成选手（见 scanPlayerFolders）。
-    return [];
+    // 不写也合法，而且是有意义的：players/ 下的目录会自动成为选手（见 scanPlayerFolders）。
+    return { explicit: false, entries: [] };
   }
   if (!Array.isArray(raw)) {
-    issues.add(`contestants 必须是数组，现在是 ${describe(raw)}`);
-    return [];
+    issues.add(`contestants 必须是数组（选手 id，或 {id,name,folder} 对象），现在是 ${describe(raw)}`);
+    return { explicit: false, entries: [] };
   }
 
-  const contestants: Contestant[] = [];
+  const entries: Contestant[] = [];
   const seen = new Set<string>();
   raw.forEach((item, index) => {
     const where = `contestants[${index}]`;
+    const direct = readString(item);
+    if (direct !== undefined) {
+      if (seen.has(direct)) {
+        issues.add(`选手 id "${direct}" 重复了`);
+        return;
+      }
+      seen.add(direct);
+      entries.push({ id: direct, name: direct, folder: defaultFolder(direct) });
+      return;
+    }
     if (!isObject(item)) {
-      issues.add(`${where} 必须是对象，现在是 ${describe(item)}`);
+      issues.add(`${where} 应当是选手 id 或 {id,name,folder} 对象，现在是 ${describe(item)}`);
       return;
     }
     const id = readString(item.id);
@@ -295,14 +409,59 @@ function readContestants(raw: unknown, issues: ConfigIssues): Contestant[] {
     }
     seen.add(id);
 
-    const folder = readString(item.folder);
-    if (folder === undefined) {
-      issues.add(`${where}（选手 ${id}）缺少 folder，例如 "players/${id}"`);
-      return;
-    }
-    contestants.push({ id, name: readString(item.name) ?? id, folder: toPosixRelative(folder) });
+    // folder 可以不写：默认 players/<id>。写了的以写的为准（老工作区往往自定义过）。
+    const folder = readString(item.folder) ?? defaultFolder(id);
+    entries.push({ id, name: readString(item.name) ?? id, folder: toPosixRelative(folder) });
   });
-  return contestants;
+  return { explicit: true, entries };
+}
+
+/**
+ * 合并出选手池：同一 id 以**先出现的**那份为准（players.json > 比赛文件里的旧声明 > players/ 自动发现）。
+ *
+ * 先出现的优先级最高，是因为列表顺序就是「声明强度」：显式声明的显示名与目录，
+ * 不该被自动发现的目录名盖掉。
+ */
+function mergeContestants(...lists: Contestant[][]): Contestant[] {
+  const byId = new Map<string, Contestant>();
+  for (const list of lists) {
+    for (const item of list) {
+      if (!byId.has(item.id)) {
+        byId.set(item.id, item);
+      }
+    }
+  }
+  return [...byId.values()];
+}
+
+/** 名单里只写了 id 时，名字与目录从池子里补；池子里也没有（还没建目录）就按默认算。 */
+function withPoolDefaults(pool: Contestant[], entry: Contestant): Contestant {
+  return pool.find((item) => item.id === entry.id) ?? entry;
+}
+
+/**
+ * `.verdict/players.json`：工作区级的选手声明（SPEC §6.2）。
+ *
+ * 有了它，显示名与源码目录这类「这个人是谁」的信息就只写一处，比赛文件里只留 id 名单。
+ * 不写这个文件照样能用：players/ 下的目录会被自动发现。
+ */
+async function loadDeclaredPlayers(rootDir: string): Promise<Contestant[]> {
+  const file = playersFileOf(rootDir);
+  if (!(await isFile(file))) {
+    return [];
+  }
+  try {
+    const raw = await readJsonObject(file, (target) => fs.promises.readFile(target, 'utf8'));
+    const list = Array.isArray(raw) ? raw : raw.contestants;
+    const issues = new ConfigIssues();
+    const parsed = readContestants(list, issues);
+    issues.throwIfAny(file);
+    return parsed.entries;
+  } catch (err) {
+    // 解析不了的配置必须当场说清楚是哪一份、哪一行有问题，而不是静默当成「没有这个人」。
+    const first = messageOf(err).split('\n')[0];
+    throw new Error(`${file} 读不出来：${first}`);
+  }
 }
 
 async function loadProblems(
@@ -405,17 +564,56 @@ async function hasSourceFile(dir: string, depth: number): Promise<boolean> {
   return false;
 }
 
-function serializeContest(contest: Contest): Record<string, unknown> {
+function serializeContest(pkg: ContestPackage): Record<string, unknown> {
+  const { contest } = pkg;
   // 与 problem.json 同样的策略：先摊开 _raw 再覆盖已知字段（SPEC §6.5）。
-  return {
+  const base: Record<string, unknown> = {
     ...(contest._raw ?? {}),
     version: CONTEST_JSON_VERSION,
     id: contest.id,
     title: contest.title,
     maxRejudge: contest.maxRejudge,
     problems: contest.problems.map((problem) => problem.id),
-    contestants: contest.contestants,
   };
+  if (!writesContestants(pkg)) {
+    // 默认「池子里全上」的比赛不写这个字段：写了反而会把自动发现的选手固化成配置，
+    // 以后往 players/ 里放新程序就不会自动进这场比赛了。
+    delete base.contestants;
+    return base;
+  }
+  return {
+    ...base,
+    contestants: contest.contestants.map((item) => contestantField(item)),
+  };
+}
+
+/**
+ * 要不要把 contestants 写进文件。
+ *
+ * - 文件里本来就写了 → 写（保持「显式名单」这个语义）；
+ * - 本来没写，但面板上加了人或减了人 → 写（这时候它已经是一份名单了）；
+ * - 本来没写、名单也还是池子的全部 → 不写（保住「放进去就算」）。
+ */
+function writesContestants(pkg: ContestPackage): boolean {
+  if (pkg.contestantsExplicit) {
+    return true;
+  }
+  const poolIds = new Set(pkg.pool.map((item) => item.id));
+  const listed = pkg.contest.contestants;
+  return listed.length !== poolIds.size || listed.some((item) => !poolIds.has(item.id));
+}
+
+/**
+ * 名单里一项写成什么：默认的名字与目录就直接写 id 字符串，自定义过的写成对象。
+ *
+ * 这样新文件读起来就是 `["alice","bob"]`，而 0.1.3 那些把显示名写进比赛文件的老文件
+ * 在改写回去时不会丢信息。
+ */
+function contestantField(item: Contestant): string | Record<string, string> {
+  if (item.name === item.id && item.folder === defaultFolder(item.id)) {
+    return item.id;
+  }
+  return { id: item.id, name: item.name, folder: item.folder };
 }
 
 /** contests/ 下所有 .json 的文件名；目录不存在就当空（还没有多场比赛而已）。 */

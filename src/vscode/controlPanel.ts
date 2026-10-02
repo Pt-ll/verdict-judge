@@ -41,6 +41,9 @@ const ALLOWED_COMMANDS = new Set([
   'verdict.newContest',
   'verdict.switchContest',
   'verdict.newProblem',
+  'verdict.addContestantToContest',
+  'verdict.newContestant',
+  'verdict.removeContestantFromContest',
   'verdict.importProblem',
   'verdict.exportProblem',
   'verdict.deleteProblem',
@@ -58,8 +61,6 @@ export interface ControlPanelDeps {
   caseDocs: CaseDocumentStore;
   commands: Pick<VerdictCommands, 'judgeDocumentInPackage'>;
   contest: ContestSession;
-  /** 题目包被改动后刷新 Testing 树（面板与 Testing 面板看同一份数据）。 */
-  refreshTests: () => Promise<void>;
 }
 
 /**
@@ -220,7 +221,6 @@ export class VerdictControlPanel implements vscode.WebviewViewProvider, vscode.D
     // 一次保存会触发好几条事件（problem.json + submissions.json + 目录），
     // 攒一小会儿再刷新，省得同一份数据重算四五遍。
     this.scheduleRefresh();
-    void this.deps.refreshTests();
   }
 
   private send(message: unknown): void {
@@ -509,7 +509,6 @@ export class VerdictControlPanel implements vscode.WebviewViewProvider, vscode.D
     const pkg = await loadProblem(this.requireRoot());
     change(pkg);
     await saveProblem(pkg);
-    await this.deps.refreshTests();
     await this.recompute();
   }
 
@@ -567,7 +566,6 @@ export class VerdictControlPanel implements vscode.WebviewViewProvider, vscode.D
     }
     pkg.problem.tests = plan.tests;
     await saveProblem(pkg);
-    await this.deps.refreshTests();
     await this.recompute();
     this.notify('info', `已登记 ${plan.added.length} 个测试点：${plan.added.map((item) => item.id).join('、')}`);
   }
