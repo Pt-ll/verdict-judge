@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { removeTest, setTestSubtask } from '../src/core/problem/edit';
 import {
   PROBLEM_FILE,
   dataFilePath,
@@ -378,14 +379,50 @@ describe('loadProblem 的报错', () => {
     expect(message).toContain('成环');
   });
 
-  it('空子任务会被指出来', async () => {
-    const message = await expectLoadError({
-      ...BASE_PROBLEM,
-      subtasks: [{ id: '1', points: 30 }],
-      tests: [{ id: '1', input: 'data/1.in', answer: 'data/1.out' }],
+  it('空子任务是合法的编辑中间态（不报错）', async () => {
+    // 把子任务里最后一个测试点移走、或者刚建了个空组时，文件会暂时长这样。
+    const dir = makePackage({
+      [PROBLEM_FILE]: problemJson({
+        ...BASE_PROBLEM,
+        subtasks: [{ id: '1', points: 30 }],
+        tests: [{ id: '1', input: 'data/1.in', answer: 'data/1.out' }],
+      }),
     });
 
-    expect(message).toContain('子任务 "1" 没有任何测试点');
+    const pkg = await loadProblem(dir);
+
+    expect(pkg.problem.subtasks).toHaveLength(1);
+    expect(pkg.problem.subtasks[0]?.tests).toEqual([]);
+  });
+
+  it('把子任务里最后一个测试点移走/删掉后，存回去还能正常加载', async () => {
+    const dir = makePackage({
+      [PROBLEM_FILE]: problemJson({
+        ...BASE_PROBLEM,
+        subtasks: [
+          { id: '1', points: 30, tests: ['1'] },
+          { id: '2', points: 70, tests: ['2'] },
+        ],
+        tests: [
+          { id: '1', input: 'data/1.in', answer: 'data/1.out' },
+          { id: '2', input: 'data/2.in', answer: 'data/2.out' },
+        ],
+      }),
+    });
+    const pkg = await loadProblem(dir);
+
+    // 场景一：把 2 号点挪到 1 组 → 2 组空了。
+    pkg.problem = setTestSubtask(pkg.problem, '2', '1');
+    await saveProblem(pkg);
+    expect((await loadProblem(dir)).problem.subtasks.map((item) => item.tests.length)).toEqual([2, 0]);
+
+    // 场景二：再把两个点都移出登记 → 两组都空。
+    const again = await loadProblem(dir);
+    again.problem = removeTest(removeTest(again.problem, '1'), '2');
+    await saveProblem(again);
+    const reloaded = await loadProblem(dir);
+    expect(reloaded.problem.tests).toEqual([]);
+    expect(reloaded.problem.subtasks.map((item) => item.tests.length)).toEqual([0, 0]);
   });
 
   it('不是 JSON 时给出文件名', async () => {

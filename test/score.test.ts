@@ -98,6 +98,71 @@ describe('scoreProblem', () => {
     expect(result.score).toBe(65);
   });
 
+
+  it('内联样例按实际判定计分：跑了通过才拿分，没跑就是 0', () => {
+    const sample = { id: 'sample-1', inputText: '1\n', answerText: '1\n', points: 10 };
+    const problem = problemOf([], [sample, testOf('1', 90)]);
+
+    // 还没跑样例：满分包含它的 10 分，但得分为 0（不默认送分）。
+    const notRun = scoreProblem(problem, [caseOf('1', 90, 90)]);
+    expect(notRun.score).toBe(90);
+    expect(notRun.maxScore).toBe(100);
+
+    // 样例跑挂了：同样拿 0 分。
+    const failedSample = scoreProblem(problem, [caseOf('sample-1', 0, 10), caseOf('1', 90, 90)]);
+    expect(failedSample.score).toBe(90);
+
+    // 样例跑过了：拿满 10 分。
+    const passedSample = scoreProblem(problem, [caseOf('sample-1', 10, 10), caseOf('1', 90, 90)]);
+    expect(passedSample.score).toBe(100);
+  });
+
+  it('min 组里的内联样例与数据点一视同仁：样例挂在组里也会拉低整组', () => {
+    const sample = { id: 'sample-1', inputText: '1\n', answerText: '1\n', points: 10 };
+    const problem = problemOf(
+      [{ id: '1', points: 100, tests: ['sample-1', '1'], dependsOn: [], scoring: 'min' }],
+      [sample, testOf('1', 90)],
+    );
+
+    const result = scoreProblem(problem, [caseOf('sample-1', 0, 10), caseOf('1', 90, 90)]);
+
+    expect(result.score).toBe(0);
+    expect(result.subtasks[0]?.status).toBe('none');
+  });
+
+  it('空子任务记 0 分 / 0 满分，不撑大满分、也不产生 Infinity', () => {
+    const problem = problemOf(
+      [
+        { id: '1', points: 30, tests: [], dependsOn: [], scoring: 'min' },
+        { id: '2', points: 70, tests: ['1'], dependsOn: [], scoring: 'min' },
+      ],
+      [testOf('1', 70)],
+    );
+
+    const result = scoreProblem(problem, [caseOf('1', 70, 70)]);
+
+    expect(result.score).toBe(70);
+    expect(result.maxScore).toBe(70);
+    expect(result.subtasks[0]).toMatchObject({ id: '1', score: 0, maxScore: 0, status: 'none' });
+    expect(Number.isFinite(result.score)).toBe(true);
+  });
+
+  it('依赖空子任务的后继仍然被跳过', () => {
+    const problem = problemOf(
+      [
+        { id: '1', points: 30, tests: [], dependsOn: [], scoring: 'min' },
+        { id: '2', points: 70, tests: ['1'], dependsOn: ['1'], scoring: 'min' },
+      ],
+      [testOf('1', 70)],
+    );
+
+    const result = scoreProblem(problem, [caseOf('1', 70, 70)]);
+
+    expect(result.subtasks[1]?.status).toBe('skipped');
+    expect(result.score).toBe(0);
+    expect(result.maxScore).toBe(70);
+  });
+
   it('sum 计分：按各测试点的满分加权', () => {
     const problem = problemOf(
       [{ id: '1', points: 30, tests: ['1', '2'], dependsOn: [], scoring: 'sum' }],

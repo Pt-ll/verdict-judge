@@ -94,6 +94,7 @@ async function run() {
   await checkContestantPool(api, folder.uri);
   await checkContestantFolderAutoCreate(api, folder.uri);
   await checkInlineSample(api, folder.uri);
+  await checkEmptySubtaskEdit(api, folder.uri);
   await checkDebug(api, folder.uri);
   await checkContest(api);
 
@@ -330,6 +331,42 @@ async function checkContestPool(api, root) {
  * `players/<id>/` 应当被他建出来，用户接着把源码丢进去就行。
  */
 /**
+ * 调整测试点的子任务归属（0.1.7）：把某组最后一个点移走后，那道题必须还能加载。
+ *
+ * 以前空子任务会被当成配置错误，于是「移走/删掉最后一个点」之后整道题直接读不出来，
+ * 面板一片报错——连移回去的机会都没有。
+ */
+async function checkEmptySubtaskEdit(api, root) {
+  const file = path.join(root.fsPath, '.verdict', 'problems', 'A', 'problem.json');
+  const original = fs.readFileSync(file, 'utf8');
+  try {
+    await api.dispatchPanel({ type: 'selectProblem', problemId: 'A' });
+    // A 题：子任务 1 有 #1，子任务 2 有 #2。把 #2 挪到子任务 1 → 子任务 2 空了。
+    await api.dispatchPanel({ type: 'moveTest', testId: '2', subtaskId: '1' });
+    await api.dispatchPanel({ type: 'refresh' });
+    const state = api.panelState();
+    assert.ok(state.selected, '空子任务不应该让题目加载失败');
+    assert.deepEqual(
+      state.selected.subtasks.map((item) => item.tests.length),
+      [2, 0],
+      '移走最后一个点之后，原组应当为空但仍然存在',
+    );
+
+    // 再移回去，一切恢复。
+    await api.dispatchPanel({ type: 'moveTest', testId: '2', subtaskId: '2' });
+    await api.dispatchPanel({ type: 'refresh' });
+    assert.deepEqual(
+      api.panelState().selected.subtasks.map((item) => item.tests.length),
+      [1, 1],
+    );
+    console.log('[verdict] 子任务调整：移走/移回最后一组测试点都不再报错');
+  } finally {
+    fs.writeFileSync(file, original, 'utf8');
+    await api.dispatchPanel({ type: 'refresh' });
+  }
+}
+
+/**
  * 内联样例与数据删除（0.1.5）。
  *
  * 走面板真正的两个动作：
@@ -372,6 +409,31 @@ async function checkInlineSample(api, root) {
     assert.equal(panelTest.verdict, 'AC', `样例应当判 AC，实际 ${panelTest.verdict}`);
     assert.equal(panelTest.inline, true, '面板应当知道这是内联样例');
     console.log('[verdict] 内联样例：粘贴后直接跑通（未生成任何数据文件）');
+
+    // 给样例 10 分，但先把期望答案改错：满分变成 110，样例 WA 应当只拿 100 分。
+    // 这条专门盯「样例给了分就默认通过」——它必须是按实际判定计分的。
+    const edited = JSON.parse(fs.readFileSync(problemFile, 'utf8'));
+    const sampleInFile = edited.tests.find((test) => test.id === sample.id);
+    sampleInFile.points = 10;
+    sampleInFile.answerText = '999\n';
+    fs.writeFileSync(problemFile, `${JSON.stringify(edited, null, 2)}\n`, 'utf8');
+    await api.dispatchPanel({ type: 'refresh' });
+    await api.dispatchPanel({ type: 'judge' });
+    const failed = api.panelState().selected;
+    assert.equal(failed.maxScore, 110, `样例 10 分后整题满分应当是 110，实际 ${failed.maxScore}`);
+    assert.equal(failed.score, 100, `样例没通过就该是 0 分（不能默认通过），实际 ${failed.score}`);
+
+    // 改回正确的期望输出再跑：这 10 分是靠判定拿到的。
+    sampleInFile.answerText = sampleAnswer;
+    fs.writeFileSync(problemFile, `${JSON.stringify(edited, null, 2)}\n`, 'utf8');
+    // 上一次判 WA 会自动打开 diff，活动编辑器变成 verdict:// 虚拟文档；
+    // 评测只接受磁盘上的源码，所以先回到选手文件（真实使用也是这个动作）。
+    await openSource(root, 'players/alice/B.cpp');
+    await api.dispatchPanel({ type: 'refresh' });
+    await api.dispatchPanel({ type: 'judge' });
+    const passed = api.panelState().selected;
+    assert.equal(passed.score, 110, `样例通过后应当是 110，实际 ${passed.score}`);
+    console.log('[verdict] 内联样例：给了分值后按实际判定计分（WA→0，AC→满分）');
 
     // 删样例：只从 problem.json 里去掉了它。
     await api.dispatchPanel({ type: 'deleteTest', testId: sample.id });

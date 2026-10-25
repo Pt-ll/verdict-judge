@@ -30,6 +30,8 @@ export function scoreProblem(problem: Problem, cases: CaseResult[]): ProblemScor
       // 满分是 0 的测试点没有分可丢，不参与拉低组内得分率。
       return 1;
     }
+    // 内联样例与数据点走完全相同的规则：按实际判定算分。
+    // 它是「样例」不代表它默认通过——没跑、没通过都是 0 分（§5.5）。
     const result = caseById.get(testId);
     if (result === undefined) {
       // 取消或中途失败时某些点没有结果，按 0 分算，而不是装作没这个点。
@@ -42,6 +44,18 @@ export function scoreProblem(problem: Problem, cases: CaseResult[]): ProblemScor
   const computed = new Map<string, SubtaskResult>();
 
   for (const subtask of ordered) {
+    if (subtask.tests.length === 0) {
+      // 空子任务（刚建出来、或把最后一个测试点移走了）：还没有可判的东西。
+      // 记 0 分 / 0 满分 —— 既不能白送 points，也不能先把整题满分撑大。
+      computed.set(subtask.id, {
+        id: subtask.id,
+        score: 0,
+        maxScore: 0,
+        status: 'none',
+      });
+      continue;
+    }
+
     const blocked = subtask.dependsOn.some((id) => computed.get(id)?.status !== 'full');
     if (blocked) {
       computed.set(subtask.id, {

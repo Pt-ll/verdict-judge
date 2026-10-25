@@ -591,12 +591,9 @@ function validateProblem(problem: Problem, issues: ConfigIssues): void {
     subtask.tests = problem.tests
       .filter((test) => test.subtask === subtask.id)
       .map((test) => test.id);
-    if (subtask.tests.length === 0) {
-      issues.add(
-        `子任务 "${subtask.id}" 没有任何测试点：在它的 tests 里列出测试点 id，` +
-          `或在测试点的 subtask 字段里写上 "${subtask.id}"`,
-      );
-    }
+    // 空子任务是合法的「编辑中间态」：把组里最后一个测试点移走、或刚建了个空组时，
+    // 文件会暂时长这样。以前这里当错误，后果是移走一个点之后整道题直接加载失败，
+    // 面板一片报错、还没法再把它移回来。空组在计分里按 0 分 / 0 满分处理（§5.5）。
   }
 
   for (const subtask of problem.subtasks) {

@@ -721,7 +721,9 @@ const SCRIPT = `
     var wrap = el('div');
     var row = el('div', 'case');
     row.appendChild(el('span', 'cid', '#' + test.id));
-    if (test.inline) { row.appendChild(el('span', 'num', '样例')); }
+    if (test.inline) {
+      row.appendChild(el('span', 'num', test.points > 0 ? '样例 · ' + test.points + ' 分' : '样例'));
+    }
     row.appendChild(chip(test.verdict));
     row.appendChild(el('span', 'num', fmtTime(test.timeMs)));
     row.appendChild(el('span', 'num', fmtMemory(test.memoryKb)));
@@ -753,6 +755,11 @@ const SCRIPT = `
     if (!expanded[test.id]) { return wrap; }
 
     var box = el('div', 'expand');
+    if (test.inline) {
+      box.appendChild(el('div', 'hint', test.points > 0
+        ? '内联样例按实际判定计分：通过拿 ' + test.points + ' 分，没通过 0 分。'
+        : '内联样例当前 0 分：只做反馈，不计入总分。'));
+    }
     if (test.message) { box.appendChild(el('div', 'hint', test.message)); }
     box.appendChild(el('h3', null, '输入 · ' + (test.input || '（内联样例，存在 problem.json 里）')));
     box.appendChild(pre(test.inputText, '（读不到文件）'));
@@ -918,6 +925,10 @@ const SCRIPT = `
       group.appendChild(editor);
     }
 
+    if (tests.length === 0) {
+      group.appendChild(el('div', 'hint',
+        '（这一组还没有测试点：把测试点移进来，或者删掉这个子任务——空组不会报错，也不会占分）'));
+    }
     tests.forEach(function (test) { group.appendChild(renderCaseRow(test, allSubtasks)); });
     return group;
   }

@@ -422,6 +422,7 @@ async function detail(
       .map((test) => test.id),
     score: scored.score,
     maxScore: scored.maxScore,
+    // 样例也按实际判定计分，所以没跑它同样意味着分数不完整（下界）。
     partial: results.length > 0 && pkg.problem.tests.some((test) => !covered.has(test.id)),
   };
 }
