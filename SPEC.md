@@ -380,7 +380,7 @@ export interface TestCase {
   answer: string;        // 相对题目包路径
   points: number;
   subtask?: string;
-  validator?: string;    // 可选：数据合法性校验器
+  validator?: string;    // 预留：当前只保留配置，尚不执行数据合法性校验
 }
 
 export interface Subtask {
@@ -585,7 +585,8 @@ export function scoreProblem(problem: Problem, cases: CaseResult[]): {
 - `judgeProblem` 收 `ProblemPackage` 而不是 `Problem`：测试点路径相对题目包根目录，
   没有 `rootDir` 就还原不出绝对路径。
 - 预热（§9）不在这里做：那是「编译产物是不是新写的」这类知识，属于上层 `engineFacade`。
-- 不属于任何子任务的测试点直接计入总分，不会因为加了子任务就凭空消失。
+- 题目定义了子任务后，不属于任何子任务的测试点只保留判定反馈，得分与满分都按 0 处理；
+  没有定义子任务的平铺题目仍按各测试点自身分值直接计分。
 
 判定流程（单测试点）：
 
@@ -618,9 +619,11 @@ export function scoreProblem(problem: Problem, cases: CaseResult[]): {
 计分时与 `input` / `answer` 的测试点完全一样——按**实际判定**算分：
 
 - 样例默认 `points: 0`，纯粹是「点一下看对不对」的反馈；
-- 给样例写了 `points: 10`：整题满分 +10，**通过才拿这 10 分**；WA / 没跑都是 0 分；
+- 没有子任务时，给样例写 `points: 10`：整题满分 +10，**通过才拿这 10 分**；WA / 没跑都是 0 分；
+- 有子任务时必须把样例归入某个子任务才参与计分；未归组样例与其他未归组数据一样按 0 分处理；
 - 样例放进 `min` 组会像普通点一样拉低整组；
-- 面板的「分数不完整（下界）」同样把它算进去：没跑样例就是 partial。
+- 面板的「分数不完整（下界）」只检查实际参与计分的点：计分样例没跑就是 partial，
+  未归组的 0 分反馈样例没跑不影响分数完整性。
 - 实现上不要为样例加"默认通过"的特殊分支（那是把计分做错，不是简化）。
 
 ### 5.6 题目类型适配（types/）★
@@ -1114,6 +1117,16 @@ exitCode != 0          -> RE
 - 给内联样例 10 分后：满分 +10；样例 AC 才拿到这 10 分，WA 或没跑都是 0 分。
 - 只跑文件数据点（不跑样例）时，面板不标「分数不完整」。
 
+### M10 — 计分规则一致性修复（0.1.8）
+交付：未归组测试点统一按 0 分处理、0 分样例按实际判定参与子任务、空子任务创建流程修复、
+面板与成绩单有效分值同步，以及仓库规则与文档一致性审计。
+
+验收：
+- 题目存在子任务时，未归组点即使 AC 也只保留反馈，单点记录 / 总分 / 满分 / 成绩单均按 0 处理；
+  没有子任务的平铺题目仍按测试点自身分值计分。
+- 默认 0 分样例进入 `min` / `sum` 子任务后不再无条件满分，实际 AC 才能取得对应组分。
+- 「＋ 子任务」生成合法空组，不擅自移动测试点；没跑未计分的 0 分样例不误报 partial。
+
 ### M8 — 内联样例 + 数据删除（0.1.5）
 交付：测试点的内联形态（`inputText` / `answerText`，§6.3）、面板上的「＋ 粘贴样例」与
 「删除样例」/「删除数据文件」、导出题目包时把总库数据收进包内 `data/`。
@@ -1534,7 +1547,7 @@ ZIP（`[Content_Types].xml` + `extension.vsixmanifest` + `extension/**`），复
 
 ```bash
 pnpm package                                             # 生成 dist/verdict-judge-<版本>.vsix
-code --install-extension dist/verdict-judge-0.1.7.vsix   # 安装（版本号见 package.json）
+code --install-extension dist/verdict-judge-0.1.8.vsix   # 安装（版本号见 package.json）
 ```
 
 ---

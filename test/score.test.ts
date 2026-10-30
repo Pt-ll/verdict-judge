@@ -130,6 +130,46 @@ describe('scoreProblem', () => {
     expect(result.subtasks[0]?.status).toBe('none');
   });
 
+  it('默认 0 分样例进入 min 子任务后不再自动满分，只有实际 AC 才通过', () => {
+    const sample = { id: 'sample-1', inputText: '1\n', answerText: '1\n', points: 0 };
+    const problem = problemOf(
+      [{ id: '1', points: 100, tests: ['sample-1'], dependsOn: [], scoring: 'min' }],
+      [sample],
+    );
+
+    const notRun = scoreProblem(problem, []);
+    expect(notRun.subtasks[0]).toEqual({ id: '1', score: 0, maxScore: 100, status: 'none' });
+
+    const failed = scoreProblem(problem, [
+      { ...caseOf('sample-1', 0, 1), verdict: 'WA' },
+    ]);
+    expect(failed.subtasks[0]).toEqual({ id: '1', score: 0, maxScore: 100, status: 'none' });
+
+    const passed = scoreProblem(problem, [
+      { ...caseOf('sample-1', 1, 1), score: 0, verdict: 'AC' },
+    ]);
+    expect(passed.subtasks[0]).toEqual({ id: '1', score: 100, maxScore: 100, status: 'full' });
+  });
+
+  it('sum 子任务全是默认 0 分样例时按实际结果等权计分，不无条件送满分', () => {
+    const samples = [
+      { id: 'sample-1', inputText: '1\n', answerText: '1\n', points: 0 },
+      { id: 'sample-2', inputText: '2\n', answerText: '2\n', points: 0 },
+    ];
+    const problem = problemOf(
+      [{ id: '1', points: 100, tests: ['sample-1', 'sample-2'], dependsOn: [], scoring: 'sum' }],
+      samples,
+    );
+
+    expect(scoreProblem(problem, []).score).toBe(0);
+
+    const half = scoreProblem(problem, [
+      { ...caseOf('sample-1', 1, 1), score: 0, verdict: 'AC' },
+      { ...caseOf('sample-2', 0, 1), verdict: 'WA' },
+    ]);
+    expect(half.subtasks[0]).toEqual({ id: '1', score: 50, maxScore: 100, status: 'partial' });
+  });
+
   it('空子任务记 0 分 / 0 满分，不撑大满分、也不产生 Infinity', () => {
     const problem = problemOf(
       [
@@ -176,7 +216,7 @@ describe('scoreProblem', () => {
     expect(result.subtasks[0]?.status).toBe('partial');
   });
 
-  it('不属于任何子任务的测试点直接计入总分，不会凭空消失', () => {
+  it('有子任务时，未归组测试点只反馈判定，得分与满分都按 0 处理', () => {
     const problem = problemOf(
       [{ id: '1', points: 30, tests: ['1'], dependsOn: [], scoring: 'min' }],
       [testOf('1', 10), testOf('9', 20)],
@@ -184,8 +224,27 @@ describe('scoreProblem', () => {
 
     const result = scoreProblem(problem, [caseOf('1', 10, 10), caseOf('9', 20, 20)]);
 
-    expect(result.score).toBe(50);
-    expect(result.maxScore).toBe(50);
+    expect(result.score).toBe(30);
+    expect(result.maxScore).toBe(30);
+  });
+
+  it('测试点移出子任务后，即使保留原 points 且判 AC，也不再记录这部分分数', () => {
+    const problem = problemOf(
+      [
+        { id: '1', points: 30, tests: [], dependsOn: [], scoring: 'min' },
+        { id: '2', points: 70, tests: ['2'], dependsOn: [], scoring: 'min' },
+      ],
+      [testOf('1', 30), testOf('2', 70)],
+    );
+
+    const result = scoreProblem(problem, [caseOf('1', 30, 30)]);
+
+    expect(result.score).toBe(0);
+    expect(result.maxScore).toBe(70);
+    expect(result.subtasks).toEqual([
+      { id: '1', score: 0, maxScore: 0, status: 'none' },
+      { id: '2', score: 0, maxScore: 70, status: 'none' },
+    ]);
   });
 
   it('没有结果的测试点按 0 分算（取消或中途失败）', () => {

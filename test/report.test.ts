@@ -175,6 +175,37 @@ describe('standingsToHtml', () => {
     expect(parsed[0]?.cases[0]).toMatchObject({ test: '1', score: 100, points: 100 });
   });
 
+  it('成绩单把未归组测试点的有效满分显示为 0', () => {
+    const orphanProblem: Problem = {
+      ...problemOf('A'),
+      subtasks: [{ id: '1', points: 100, tests: [], dependsOn: [], scoring: 'min' }],
+    };
+    const orphanContest: Contest = {
+      ...contestOf([{ id: 'alice', name: 'Alice' }]),
+      problems: [orphanProblem],
+    };
+    const submission = submissionOf('alice', 'A', 0);
+    if (submission.result !== undefined) {
+      submission.result.maxScore = 0;
+      submission.result.cases[0]!.score = 0;
+      submission.result.subtasks = [{ id: '1', score: 0, maxScore: 0, status: 'none' }];
+    }
+    const output = standingsToHtml(
+      orphanContest,
+      computeStandings(orphanContest, [submission]),
+      { theme: 'ioi', embedData: true },
+      [submission],
+    );
+    const embedded = /<script type="application\/json" id="verdict-details">(.*?)<\/script>/s.exec(
+      output,
+    );
+    const parsed = JSON.parse((embedded?.[1] ?? '').replace(/\\u003c/g, '<')) as {
+      cases: { test: string; score: number; points: number }[];
+    }[];
+
+    expect(parsed[0]?.cases[0]).toMatchObject({ test: '1', score: 0, points: 0 });
+  });
+
   it('data-cell 是纯数字下标：不受 HTML 转义影响（只有真浏览器才会暴露这类问题）', () => {
     const output = html();
     const embedded = /<script type="application\/json" id="verdict-details">(.*?)<\/script>/s.exec(

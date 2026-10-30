@@ -400,8 +400,17 @@ async function checkInlineSample(api, root) {
       `样例不该生成数据文件，实际多出了 ${sample.id}.in`,
     );
 
-    // 样例能直接跑：打开 alice 的 B 题，只跑这个样例，应当是 AC。
+    // 默认 0 分且未归组的样例不属于计分范围：只跑文件数据后，分数已经完整，
+    // 不能因为还没点过样例就一直提示「分数不完整」。
     await openSource(root, 'players/alice/B.cpp');
+    await api.dispatchPanel({ type: 'judgeCase', testId: '1' });
+    assert.equal(
+      api.panelState().selected.partial,
+      false,
+      '未运行的 0 分反馈样例不应让完整分数变成 partial',
+    );
+
+    // 样例能直接跑：只跑这个样例，应当是 AC；上一条文件数据结果仍应保留。
     await api.dispatchPanel({ type: 'judgeCase', testId: sample.id });
     const panelTest = api
       .panelState()

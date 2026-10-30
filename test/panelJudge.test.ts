@@ -74,6 +74,97 @@ const toolchain = {
 };
 
 describe('judgeProblem：只跑部分测试点（面板上单点运行）', () => {
+  it('未归组文件数据判 AC 时，单点记录和题目总分都必须是 0', async () => {
+    const dir = path.join(workDir, 'orphan-file-case');
+    fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, PROBLEM_FILE),
+      `${JSON.stringify(
+        {
+          id: 'orphan-score',
+          name: 'orphan-score',
+          type: 'traditional',
+          limits: { ...DEFAULT_LIMITS },
+          comparator: { mode: 'default' },
+          subtasks: [
+            { id: '1', points: 30, tests: [], dependsOn: [], scoring: 'min' },
+            { id: '2', points: 70, tests: ['2'], dependsOn: [], scoring: 'min' },
+          ],
+          tests: [
+            { id: '1', input: 'data/1.in', answer: 'data/1.out', points: 30 },
+            { id: '2', input: 'data/2.in', answer: 'data/2.out', points: 70, subtask: '2' },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+    fs.writeFileSync(path.join(dir, 'data', '1.in'), '1\n', 'utf8');
+    fs.writeFileSync(path.join(dir, 'data', '1.out'), '1\n', 'utf8');
+    fs.writeFileSync(path.join(dir, 'data', '2.in'), '2\n', 'utf8');
+    fs.writeFileSync(path.join(dir, 'data', '2.out'), '2\n', 'utf8');
+    const pkg = await loadProblem(dir);
+
+    const result = await judgeProblem(pkg, {
+      runCmd: { cmd: '/fake/a.out', args: [] },
+      toolchain,
+      sandbox: echoSandbox(),
+      cacheDir: workDir,
+      onlyTestIds: ['1'],
+    });
+
+    expect(result.cases[0]?.verdict).toBe('AC');
+    expect(result.cases[0]?.score).toBe(0);
+    expect(result.score).toBe(0);
+    expect(result.maxScore).toBe(70);
+  });
+
+  it('默认 0 分内联样例判错时，所在子任务不得自动满分', async () => {
+    const dir = path.join(workDir, 'inline-zero-sample');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, PROBLEM_FILE),
+      `${JSON.stringify(
+        {
+          id: 'sample-score',
+          name: 'sample-score',
+          type: 'traditional',
+          limits: { ...DEFAULT_LIMITS },
+          comparator: { mode: 'default' },
+          subtasks: [
+            {
+              id: '1',
+              points: 100,
+              tests: ['sample-1'],
+              dependsOn: [],
+              scoring: 'min',
+            },
+          ],
+          tests: [
+            { id: 'sample-1', inputText: '1\n', answerText: '2\n', points: 0, subtask: '1' },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+    const pkg = await loadProblem(dir);
+
+    const result = await judgeProblem(pkg, {
+      runCmd: { cmd: '/fake/a.out', args: [] },
+      toolchain,
+      sandbox: echoSandbox(),
+      cacheDir: workDir,
+    });
+
+    expect(result.cases[0]?.verdict).toBe('WA');
+    expect(result.score).toBe(0);
+    expect(result.maxScore).toBe(100);
+    expect(result.subtasks[0]).toEqual({ id: '1', score: 0, maxScore: 100, status: 'none' });
+  });
+
   it('只跑指定的点，并把结果标成 partial', async () => {
     const pkg = await loadProblem(makePackage());
 

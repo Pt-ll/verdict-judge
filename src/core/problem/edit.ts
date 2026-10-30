@@ -188,15 +188,12 @@ export function nextSubtaskId(problem: Problem): string {
 /**
  * 加一个空子任务。
  *
- * 空子任务在加载期是非法的（§6.3 明确报错），所以这里拦一道：
- * 加完立刻保存的话，用户下次打开就会看到加载失败，那比不让加更让人困惑。
+ * 0.1.7 起空子任务是合法的编辑中间态：用户可以先把分组架子建好，再逐个移动测试点。
+ * 这里不能再自动认领某个点，否则点的归属会在用户没有选择的情况下被悄悄改掉。
  */
 export function addSubtask(problem: Problem, points: number): Problem {
   if (!Number.isInteger(points) || points < 0) {
     throw new Error('子任务分值必须是非负整数');
-  }
-  if (problem.tests.length === 0) {
-    throw new Error('这个题目还没有测试点，先导入测试点再加子任务');
   }
   const id = nextSubtaskId(problem);
   const subtask: Subtask = {
@@ -207,15 +204,7 @@ export function addSubtask(problem: Problem, points: number): Problem {
     dependsOn: [],
     scoring: 'min',
   };
-  // 新建的子任务至少要有一个测试点，否则问题包立刻处于非法状态。
-  const orphan = problem.tests.find(
-    (test) => !problem.subtasks.some((item) => item.tests.includes(test.id)),
-  );
-  const target = orphan ?? problem.tests[0];
-  if (target !== undefined) {
-    subtask.tests = [target.id];
-  }
-  return withSubtask(problem, subtask, target?.id);
+  return { ...problem, subtasks: [...problem.subtasks, subtask] };
 }
 
 /** 改一个子任务；依赖成环、引用不存在的子任务都会在这里被挡下。 */
@@ -367,23 +356,6 @@ export function addSampleTest(problem: Problem, inputText: string, answerText: s
     points: 0,
   };
   return { ...problem, tests: [...problem.tests, test] };
-}
-
-/** 把子任务挂上去，同时把那个测试点的 subtask 字段写成一致的值。 */
-function withSubtask(problem: Problem, subtask: Subtask, testId: string | undefined): Problem {
-  const tests = problem.tests.map((test) =>
-    test.id === testId ? { ...test, subtask: subtask.id } : test,
-  );
-  // 那个测试点原本属于别的子任务时要摘出来，否则同一个点会被算两次。
-  const subtasks = [
-    ...problem.subtasks.map((item) =>
-      testId === undefined || !item.tests.includes(testId)
-        ? item
-        : { ...item, tests: item.tests.filter((other) => other !== testId) },
-    ),
-    subtask,
-  ];
-  return { ...problem, subtasks, tests };
 }
 
 function withoutSubtaskField(test: TestCase): TestCase {

@@ -10,8 +10,7 @@ export interface ComparatorInput {
 
 export interface CompareResult {
   /**
-   * SPEC 只定义了 AC / WA / PC；这里额外允许 UKE，
-   * 用于「该比较方式尚未实现」这种必须如实上报、又不能假装判对的情况。
+   * SPEC 只定义了 AC / WA / PC；这里额外允许 UKE，表示比较器没有准备好或评测方出错。
    */
   verdict: 'AC' | 'WA' | 'PC' | 'UKE';
   /** 0..1，spj 可给部分分；AC 为 1，WA 为 0。 */
@@ -29,8 +28,8 @@ export interface Comparator {
 /**
  * 按配置创建比较器。
  *
- * spj / interactive 属于 M4，这里返回明确的 UKE 而不是抛异常，
- * 也不能悄悄退化成 default 比较——那会把「没判」伪装成「判过了」。
+ * spj / interactive 需要题目包路径、编译器与沙箱，必须先走 prepareComparator；
+ * 这个纯函数工厂拿不到那些上下文，所以返回明确的 UKE，不能悄悄退化成 default。
  */
 export function createComparator(config: ComparatorConfig): Comparator {
   switch (config.mode) {
@@ -48,7 +47,7 @@ export function createComparator(config: ComparatorConfig): Comparator {
         compare: async () => ({
           verdict: 'UKE',
           scoreRatio: 0,
-          detail: `比较方式 ${config.mode} 尚未实现（计划在 M4 落地）`,
+          detail: `比较方式 ${config.mode} 需要先准备 checker / interactor 运行环境`,
         }),
       };
   }

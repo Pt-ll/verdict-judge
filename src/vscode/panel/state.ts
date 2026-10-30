@@ -72,7 +72,7 @@ export interface PanelProblemDetail {
   comparator: ComparatorConfig;
   subtasks: PanelSubtask[];
   tests: PanelTest[];
-  /** 不属于任何子任务的测试点 id（它们也计入总分）。 */
+  /** 不属于任何子任务的测试点 id（有子任务时只反馈判定，默认按 0 分处理）。 */
   orphanTests: string[];
   score: number;
   maxScore: number;
@@ -366,6 +366,7 @@ async function detail(
   const byTest = new Map(results.map((item) => [item.test, item]));
   const scored = scoreProblem(pkg.problem, results);
   const subtaskResult = new Map(scored.subtasks.map((item) => [item.id, item]));
+  const assignedTests = new Set(pkg.problem.subtasks.flatMap((item) => item.tests));
 
   const tests: PanelTest[] = [];
   for (const test of pkg.problem.tests) {
@@ -384,7 +385,10 @@ async function detail(
       input: test.input ?? null,
       answer: test.answer ?? null,
       inline,
-      points: test.points ?? 1,
+      points:
+        pkg.problem.subtasks.length > 0 && !assignedTests.has(test.id)
+          ? 0
+          : (test.points ?? 1),
       subtask: test.subtask ?? null,
       verdict: result?.verdict ?? null,
       timeMs: result?.timeMs ?? null,
@@ -399,6 +403,12 @@ async function detail(
   }
 
   const covered = new Set(results.map((item) => item.test));
+  const scoringTests =
+    pkg.problem.subtasks.length === 0
+      ? pkg.problem.tests
+          .filter((test) => (test.points ?? 1) > 0)
+          .map((test) => test.id)
+      : [...assignedTests];
   return {
     id: pkg.problem.id,
     name: pkg.problem.name,
@@ -418,12 +428,12 @@ async function detail(
     })),
     tests,
     orphanTests: tests
-      .filter((test) => !pkg.problem.subtasks.some((item) => item.tests.includes(test.id)))
+      .filter((test) => !assignedTests.has(test.id))
       .map((test) => test.id),
     score: scored.score,
     maxScore: scored.maxScore,
-    // 样例也按实际判定计分，所以没跑它同样意味着分数不完整（下界）。
-    partial: results.length > 0 && pkg.problem.tests.some((test) => !covered.has(test.id)),
+    // 未归组点默认 0 分，只提供反馈；没跑它不应让已经完整的计分结果变回“分数不完整”。
+    partial: results.length > 0 && scoringTests.some((testId) => !covered.has(testId)),
   };
 }
 

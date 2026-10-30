@@ -4,7 +4,7 @@
 
 **完全离线 · 零运行时依赖 · Windows / macOS / Linux 一致。**
 
-更新日志见 [CHANGELOG.md](CHANGELOG.md)（0.1.7 空子任务与样例计分；0.1.6 修成绩单点击；0.1.5 粘贴样例 + 删数据；0.1.4 去掉 Testing 面板 +
+更新日志见 [CHANGELOG.md](CHANGELOG.md)（0.1.8 修正未归组点 / 样例 / 空子任务计分；0.1.7 空子任务与样例计分；0.1.6 修成绩单点击；0.1.5 粘贴样例 + 删数据；0.1.4 去掉 Testing 面板 +
 每场比赛挑选手 + 成绩单点击跳转）。
 
 完整的使用说明（安装、面板、出题流程、比赛与榜单、命令与设置、常见问题）见
@@ -16,7 +16,7 @@
 - **评测当前文件**：源码顶部有 `▶ 评测`；判定进状态栏与输出通道，编译错误进问题面板（可点击跳转到行列）。
 - **题目包**：一个 `problem.json` 描述限制、比较方式、测试点与子任务；子任务支持依赖与 min / sum 计分，依赖没满分时后继子任务记为「跳过」而不是 0 分。
 - **数据总库**：所有测试数据放在 `.verdict/data/<题目 id>/`，用文件夹名区分题目；题目包与数据分开，多场比赛可以共用同一道题的数据。
-- **粘贴样例**：面板上「＋ 粘贴样例」把题面里的输入/输出直接收进 `problem.json`，不生成 `.in` / `.out` 文件，点一下就能跑。默认 0 分；给了分值就**按实际判定计分**（通过才拿分，没通过 / 没跑都是 0 分）。
+- **粘贴样例**：面板上「＋ 粘贴样例」把题面里的输入/输出直接收进 `problem.json`，不生成 `.in` / `.out` 文件，点一下就能跑。默认 0 分；没有子任务时给正分、或把样例归入子任务后，才会**按实际判定计分**（通过才拿分，没通过 / 没跑都是 0 分）。
 - **删数据**：测试点可以「删除数据文件」（进系统回收站，同时取消登记），内联样例则只从 `problem.json` 里去掉。
 - **多场比赛**：一个工作区放几场比赛都行（`.verdict/contests/<id>.json`），题目可以重叠，各场的分数与重测次数互不干扰。
 - **选手池**：`players/` 下的目录（或 `.verdict/players.json` 里的声明）构成池子，**每场比赛自己挑谁参加**——和挑题目一样，互不影响。面板上「＋ 新建选手」会连目录一起建好。
@@ -53,16 +53,16 @@
 | VS Code 官方市场 | 扩展面板里搜 `Verdict`（`YuChenZhong.verdict-judge`） |
 | VSCodium / Gitpod / Theia 等 Open VSX 源 | 扩展面板里搜 `Verdict` |
 | 任何编辑器（手动） | 从 [Open VSX 页面](https://open-vsx.org/extension/YuChenZhong/verdict-judge) 下 VSIX，再 `code --install-extension <文件>` |
-| 本仓库的开发版 | `pnpm package` 之后装 `dist/verdict-<版本>.vsix` |
+| 本仓库的开发版 | `pnpm package` 之后装 `dist/verdict-judge-<版本>.vsix` |
 
-两个市场用的是同一个 VSIX，目前都发到 **0.1.4**（官方市场当年卡在 Azure DevOps 的鉴权上，
-后来用「网页直接上传 VSIX」绕过，经过记在 `PUBLISHING.md`）。
+两个市场用的是同一个 VSIX；截至 2026-10-25 已发布到 **0.1.6**，本仓库当前待发布版本为
+**0.1.8**（官方市场使用网页上传，发布经过记在 `PUBLISHING.md`）。
 
 本仓库内打包与安装：
 
 ```bash
 pnpm package                                                     # 生成 dist/verdict-judge-<版本>.vsix
-code --install-extension dist/verdict-judge-0.1.7.vsix           # 安装（文件名里的版本号跟着 package.json 走）
+code --install-extension dist/verdict-judge-0.1.8.vsix           # 安装（文件名里的版本号跟着 package.json 走）
 ```
 
 > macOS 上如果提示 `command not found: code`：VS Code 里按 `Cmd+Shift+P`，执行

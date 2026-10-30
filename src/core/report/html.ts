@@ -176,12 +176,15 @@ function renderProblem(problem: Problem): string {
     })
     .join('');
 
+  const assignedTests = new Set(problem.subtasks.flatMap((subtask) => subtask.tests));
   const testRows = problem.tests
     .map(
       (test) =>
         '<tr>' +
         `<td>${escapeHtml(test.id)}</td>` +
-        `<td>${String(test.points ?? 1)}</td>` +
+        `<td>${String(
+          problem.subtasks.length > 0 && !assignedTests.has(test.id) ? 0 : (test.points ?? 1),
+        )}</td>` +
         `<td class="name">${escapeHtml(test.subtask ?? '—')}</td>` +
         `<td class="name mono">${escapeHtml(test.input ?? '（内联样例）')}</td>` +
         `<td class="name mono">${escapeHtml(test.answer ?? '（内联样例）')}</td>` +
@@ -278,8 +281,12 @@ function buildDetails(
 ): CellDetail[] {
   const points = new Map<string, number>();
   for (const problem of contest.problems) {
+    const assigned = new Set(problem.subtasks.flatMap((subtask) => subtask.tests));
     for (const test of problem.tests) {
-      points.set(submissionKey(problem.id, test.id), test.points ?? 1);
+      points.set(
+        submissionKey(problem.id, test.id),
+        problem.subtasks.length > 0 && !assigned.has(test.id) ? 0 : (test.points ?? 1),
+      );
     }
   }
 
@@ -507,4 +514,3 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
-

@@ -247,6 +247,7 @@ describe('发布前置条件', () => {
       'docs/blog/verdict-使用说明.md',
     ];
     const stale: string[] = [];
+    const wrongBase: string[] = [];
     for (const relative of files) {
       const text = fs.readFileSync(path.join(root, relative), 'utf8');
       for (const match of text.matchAll(/verdict-judge-(\d+\.\d+\.\d+)\.vsix/g)) {
@@ -254,9 +255,14 @@ describe('发布前置条件', () => {
           stale.push(`${relative}: ${match[0]}`);
         }
       }
+      // 产物名是 verdict-judge-<版本>.vsix：少写 -judge 会让复制命令直接 ENOENT。
+      for (const match of text.matchAll(/dist\/verdict-(?!judge-)[^\s`'")\]]+\.vsix/g)) {
+        wrongBase.push(`${relative}: ${match[0]}`);
+      }
     }
 
     expect(stale).toEqual([]);
+    expect(wrongBase).toEqual([]);
   });
 
   it('图标是 128×128，README 也在（市场页面的门面）', () => {

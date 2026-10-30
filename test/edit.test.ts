@@ -268,7 +268,7 @@ describe('编辑后能重新读回来', () => {
 
   /**
    * 面板上的每次编辑都会立刻落盘，所以「改完还读得回来」是硬要求：
-   * loadProblem 会校验成员关系一致、依赖不成环、子任务不为空——只要有一条不满足，
+   * loadProblem 会校验成员关系一致、依赖不成环——只要有一条不满足，
    * 用户下次打开题目包就会看到加载失败，那比不让改还糟。
    */
   it('面板的编辑（加子任务 / 移归属 / 删子任务 / 移出测试点）都能重新读回来', async () => {
@@ -292,7 +292,8 @@ describe('编辑后能重新读回来', () => {
 
     let problem = addSubtask(pkg.problem, 30);
     expect(problem.subtasks.map((item) => item.id)).toEqual(['1']);
-    expect(problem.subtasks[0]?.tests).toEqual(['1']);
+    expect(problem.subtasks[0]?.tests).toEqual([]);
+    problem = setTestSubtask(problem, '1', '1');
 
     problem = addSubtask(problem, 70);
     problem = setTestSubtask(problem, '3', '2');
@@ -328,17 +329,20 @@ describe('子任务与测试点的编辑规则', () => {
     expect(nextSubtaskId(problem)).toBe('4');
   });
 
-  it('新建子任务会先认领一个还没归属的测试点（空子任务是非法的）', () => {
+  it('新建子任务保持为空，不擅自改变测试点归属', () => {
     const problem = withSubtasks(problemOf([testOf('1'), testOf('2')]), [
       { id: '1', points: 10, tests: ['1'], dependsOn: [], scoring: 'min' },
     ]);
     const next = addSubtask(problem, 20);
-    expect(next.subtasks[1]?.tests).toEqual(['2']);
-    expect(next.tests.find((test) => test.id === '2')?.subtask).toBe('2');
+    expect(next.subtasks[1]).toMatchObject({ id: '2', points: 20, tests: [] });
+    expect(next.tests).toEqual(problem.tests);
   });
 
-  it('没有测试点时不让加子任务', () => {
-    expect(() => addSubtask(problemOf([]), 10)).toThrow(/还没有测试点/);
+  it('没有测试点时也能先建立空子任务', () => {
+    const next = addSubtask(problemOf([]), 10);
+    expect(next.subtasks).toEqual([
+      { id: '1', name: '第 1 组', points: 10, tests: [], dependsOn: [], scoring: 'min' },
+    ]);
   });
 
   it('依赖成环、依赖自己、依赖不存在的子任务都会被挡下', () => {

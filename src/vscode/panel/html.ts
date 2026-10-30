@@ -991,7 +991,12 @@ const SCRIPT = `
       var orphans = problem.orphanTests
         .map(function (id) { return byId[id]; })
         .filter(function (test) { return test !== undefined; });
-      box.appendChild(renderGroup('未归入子任务', '这些点直接计入总分', orphans, null, problem.subtasks));
+      box.appendChild(renderGroup(
+        '未归入子任务',
+        '这些点只反馈判定，默认按 0 分处理',
+        orphans,
+        null,
+        problem.subtasks));
     }
 
     var tools = el('div', 'row');

@@ -14,8 +14,8 @@ export interface ProblemScore {
  * 逐个子任务算：
  *   依赖的子任务不是 full -> 本子任务 skipped，计 0 分（这就是「依赖未满分则不进入」）；
  *   scoring='min' -> 组内得分率的最小值；'sum' -> 按各测试点满分加权求和。
- * 不属于任何子任务的测试点直接计入总分，避免「加了子任务之后某些点凭空消失」。
- * 没有子任务时就是各测试点之和，也就是 M1 的计分方式。
+ * 题目定义了子任务后，未归入任何子任务的测试点只提供判定反馈，默认按 0 分处理；
+ * 没有子任务时仍是各测试点之和，也就是 M1 与普通平铺题目的计分方式。
  */
 export function scoreProblem(problem: Problem, cases: CaseResult[]): ProblemScore {
   const caseById = new Map(cases.map((item) => [item.test, item]));
@@ -26,13 +26,15 @@ export function scoreProblem(problem: Problem, cases: CaseResult[]): ProblemScor
 
   const ratioOf = (testId: string): number => {
     const max = maxOf(testId);
+    const result = caseById.get(testId);
     if (max <= 0) {
-      // 满分是 0 的测试点没有分可丢，不参与拉低组内得分率。
-      return 1;
+      // 0 分测试点本身不增加总分，但一旦被放进子任务，就仍然必须按实际判定参与组内计分。
+      // 否则默认 0 分的内联样例会被无条件视为通过，单独放进一个子任务时甚至直接送满分。
+      // 这类点没有可用的 score / max 比例，因此只有 AC 记为通过，其余判定与未运行都记 0。
+      return result?.verdict === 'AC' ? 1 : 0;
     }
     // 内联样例与数据点走完全相同的规则：按实际判定算分。
     // 它是「样例」不代表它默认通过——没跑、没通过都是 0 分（§5.5）。
-    const result = caseById.get(testId);
     if (result === undefined) {
       // 取消或中途失败时某些点没有结果，按 0 分算，而不是装作没这个点。
       return 0;
@@ -81,7 +83,6 @@ export function scoreProblem(problem: Problem, cases: CaseResult[]): ProblemScor
     });
   }
 
-  const claimed = new Set(problem.subtasks.flatMap((subtask) => subtask.tests));
   let score = 0;
   let maxScore = 0;
 
@@ -92,12 +93,11 @@ export function scoreProblem(problem: Problem, cases: CaseResult[]): ProblemScor
       maxScore += result.maxScore;
     }
   }
-  for (const test of problem.tests) {
-    if (claimed.has(test.id)) {
-      continue;
+  if (problem.subtasks.length === 0) {
+    for (const test of problem.tests) {
+      score += caseById.get(test.id)?.score ?? 0;
+      maxScore += maxOf(test.id);
     }
-    score += caseById.get(test.id)?.score ?? 0;
-    maxScore += maxOf(test.id);
   }
 
   return {
@@ -127,6 +127,10 @@ function weightedRatio(
     total += max;
     earned += max * ratioOf(testId);
   }
-  // 组内全是 0 分测试点时无从谈得分率，按满分算，否则它会凭空拖垮总分。
-  return total <= 0 ? 1 : earned / total;
+  if (total > 0) {
+    return earned / total;
+  }
+  // 全是 0 分点时没有权重可用，退回等权平均。不能直接按满分算：那会让没跑或判错的
+  // 默认 0 分样例自动拿到整个子任务的分值。空子任务已在调用处单独处理，这里 tests 非空。
+  return tests.reduce((sum, testId) => sum + ratioOf(testId), 0) / tests.length;
 }

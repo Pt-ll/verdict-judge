@@ -24,8 +24,8 @@ export interface PrepareOptions extends Omit<CheckerContext, 'includeDir'> {
 
 // 为一场评测准备好比较器（SPEC §5.4 / §5.6）。
 //
-// default / line / real 是纯函数，直接返回；spj 要先编译 checker，所以这里是异步的。
-// interactive 在下一步落地。准备失败返回 error 而不是抛异常：调用方要把「出题人配置有问题」
+// default / line / real 是纯函数，直接返回；spj / interactive 要先编译评测方程序，所以这里是异步的。
+// 准备失败返回 error 而不是抛异常：调用方要把「出题人配置有问题」
 // 如实变成该测试点的 UKE，而不是让整场评测崩掉。
 export async function prepareComparator(
   config: ComparatorConfig,

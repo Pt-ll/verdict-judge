@@ -700,14 +700,14 @@ export class VerdictControlPanel implements vscode.WebviewViewProvider, vscode.D
     await this.editProblem((pkg) => {
       pkg.problem = addSubtask(pkg.problem, Number(text));
     });
-    this.notify('info', '已加一个子任务，它会先认领一个还没归属的测试点。');
+    this.notify('info', '已加一个空子任务，可以把测试点移进来。');
   }
 
   private async removeSubtask(subtaskId: string): Promise<void> {
     await this.editProblem((pkg) => {
       pkg.problem = removeSubtask(pkg.problem, subtaskId);
     });
-    this.notify('info', `子任务 ${subtaskId} 已删除，它名下的测试点保留并改为直接计分。`);
+    this.notify('info', `子任务 ${subtaskId} 已删除，它名下的测试点已保留并取消归属。`);
   }
 
   private async updateSubtask(subtaskId: string, patch: SubtaskPatch): Promise<void> {

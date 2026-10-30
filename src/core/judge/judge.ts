@@ -315,12 +315,21 @@ export async function judgeProblem(
     );
   }
 
-  const scored = scoreProblem(pkg.problem, cases);
+  const assigned = new Set(pkg.problem.subtasks.flatMap((subtask) => subtask.tests));
+  const recordedCases =
+    pkg.problem.subtasks.length === 0
+      ? cases
+      : cases.map((item) =>
+          assigned.has(item.test) || item.score === 0 ? item : { ...item, score: 0 },
+        );
+  // 未归组点仍保留 AC/WA、耗时、输出等反馈，但不能把测试点原先的 points 带进提交记录。
+  // 否则总分即使忽略了它，成绩单里的单点详情仍会错误显示成 30/30。
+  const scored = scoreProblem(pkg.problem, recordedCases);
   return {
     problem: pkg.problem.id,
     score: scored.score,
     maxScore: scored.maxScore,
-    cases,
+    cases: recordedCases,
     subtasks: scored.subtasks,
     elapsedMs: Date.now() - startedAt,
     ...(ctx.onlyTestIds === undefined ? {} : { partial: true }),

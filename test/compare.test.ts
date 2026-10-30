@@ -204,11 +204,11 @@ describe('compare/real：实数比较', () => {
   });
 });
 
-describe('compare：尚未实现的比较方式', () => {
-  it('spj 与 interactive 返回 UKE 而不是伪装成判对', async () => {
+describe('compare：需要外部运行环境的比较方式', () => {
+  it('未准备 checker / interactor 时返回 UKE，而不是伪装成判对', async () => {
     const spj = await cmp({ mode: 'spj', spj: 'extra/checker.cpp' }, '1\n', '1\n');
     expect(spj.verdict).toBe('UKE');
-    expect(spj.detail).toContain('尚未实现');
+    expect(spj.detail).toContain('需要先准备');
 
     const interactive = await cmp({ mode: 'interactive' }, '1\n', '1\n');
     expect(interactive.verdict).toBe('UKE');

@@ -68,7 +68,7 @@ export interface TestCase {
    * 两者不一致时 problem/package.ts 会报错，而不是悄悄按其中一个算分。
    */
   subtask?: string;
-  /** 可选的数据合法性校验器（M4 落地）。 */
+  /** 预留的数据合法性校验器路径；当前版本只保留配置，尚不执行。 */
   validator?: string;
 }
 
