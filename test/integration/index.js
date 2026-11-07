@@ -147,7 +147,16 @@ async function checkProblemPackage(api, root) {
     ['小数据', '大数据'],
     '面板应当按子任务分组显示测试点',
   );
-  assert.deepEqual(selected.tests.map((item) => item.id), ['1', '2']);
+  assert.deepEqual(selected.tests.map((item) => item.id), ['1', '2', 'sample-1']);
+  assert.equal(
+    selected.tests.find((item) => item.id === 'sample-1').points,
+    0,
+    '未归组的默认 0 分样例只提供反馈，不应进入题目计分',
+  );
+  assert.ok(
+    selected.orphanTests.includes('sample-1'),
+    '未归组的样例应当显示在未归入子任务分组',
+  );
   console.log('[verdict] 题目 A：子任务 小数据(#1) / 大数据(#2)');
 
   await openSource(root, 'players/alice/A.cpp');
@@ -221,7 +230,7 @@ async function checkControlPanel(api, root) {
   );
   assert.deepEqual(
     selected.tests.map((item) => item.id),
-    ['1', '2'],
+    ['1', '2', 'sample-1'],
   );
   // 上一步（checkProblemPackage）刚用 bob 的程序跑过整题，面板应当看得到那份结果。
   assert.equal(selected.tests[0].verdict, 'AC', '面板里的测试点状态应当来自最近一次评测');
